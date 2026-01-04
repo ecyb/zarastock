@@ -57,13 +57,23 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 from selenium.webdriver.chrome.options import Options
                 
                 chrome_options = Options()
-                # Bare minimum set for Railway stability
-                chrome_options.add_argument('--headless')  # Use classic headless, not --headless=new
+                # Stable baseline for Railway
+                chrome_options.add_argument('--headless')
                 chrome_options.add_argument('--no-sandbox')
                 chrome_options.add_argument('--disable-dev-shm-usage')
                 chrome_options.add_argument('--disable-gpu')
-                chrome_options.add_argument('--remote-debugging-port=9222')
+                chrome_options.add_argument('--disable-setuid-sandbox')
+                chrome_options.add_argument('--no-zygote')
                 chrome_options.add_argument('--window-size=1920,1080')
+                # Use unique user-data-dir per process to avoid profile locks
+                chrome_options.add_argument(f'--user-data-dir=/tmp/chrome-data-{os.getpid()}')
+                chrome_options.add_argument('--disk-cache-dir=/tmp/chrome-cache')
+                # Additional stability flags for containers
+                chrome_options.add_argument('--disable-features=VizDisplayCompositor')
+                chrome_options.add_argument('--disable-ipc-flooding-protection')
+                # Chrome logging for debugging crashes
+                chrome_options.add_argument('--enable-logging=stderr')
+                chrome_options.add_argument('--v=1')
                 chrome_options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
                 chrome_options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
                 chrome_options.add_experimental_option('useAutomationExtension', False)
@@ -119,9 +129,11 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 
                 if os.path.exists(chromedriver_path):
                     service = Service(chromedriver_path)
+                    service.log_output = "/tmp/chromedriver.log"
                     self.driver = webdriver.Chrome(service=service, options=chrome_options)
                     if self.verbose:
                         print(f"  Using ChromeDriver: {chromedriver_path}")
+                        print("  Chromedriver log: /tmp/chromedriver.log")
                 else:
                     # Let Selenium auto-detect (will use system chromedriver)
                     if self.verbose:
@@ -188,9 +200,24 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
             "devtools"
         ])
     
-    def _ensure_driver_valid(self):
-        """Check if driver is valid, recreate if window is closed or DevTools disconnected."""
+    def _ensure_driver_valid(self, skip_check: bool = False):
+        """Check if driver is valid, recreate if window is closed or DevTools disconnected.
+        
+        Args:
+            skip_check: If True, skip the validity check and always recreate the driver (used when we know driver is dead).
+        """
         if not self.driver:
+            self._setup_driver()
+            return
+        
+        if skip_check:
+            # Skip check and just recreate (used when we know driver is dead)
+            print("⚠️  Recreating driver (skip_check=True)...")
+            try:
+                self.driver.quit()
+            except:
+                pass
+            self.driver = None
             self._setup_driver()
             return
         
@@ -208,56 +235,49 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 self.driver = None
                 self._setup_driver()
             else:
+                # Only recreate on dead driver errors - don't recreate for other errors
                 raise
     
-    def _safe_driver_operation(self, operation, *args, **kwargs):
-        """Execute a driver operation, retrying with fresh driver if driver is dead."""
-        try:
-            return operation(*args, **kwargs)
-        except Exception as e:
-            if self._is_dead_driver_error(e):
-                print("⚠️  Driver died mid-operation. Recreating and retrying once...")
-                self._ensure_driver_valid()
-                # Retry the operation
-                return operation(*args, **kwargs)
-            else:
+    def _safe(self, fn, *args, **kwargs):
+        """
+        Execute a driver operation safely, retrying with fresh driver if driver is dead.
+        
+        Args:
+            fn: Function that accepts (driver, *args, **kwargs). This guarantees we always
+                use the current self.driver after restart.
+        """
+        for attempt in range(2):
+            self._ensure_driver_valid()
+            try:
+                return fn(self.driver, *args, **kwargs)
+            except Exception as e:
+                if self._is_dead_driver_error(e) and attempt == 0:
+                    print("⚠️  Driver died mid-op. Recreating...")
+                    self._ensure_driver_valid(skip_check=True)
+                    continue
                 raise
     
     def fetch_product_page(self, url: str, retry: bool = True) -> Optional[str]:
         """Fetch the HTML content using browser automation."""
         try:
-            self._ensure_driver_valid()
-            
-            # Use _safe_driver_operation for all driver calls
             print(f"🌐 Loading page with browser...")
-            self._safe_driver_operation(self.driver.set_page_load_timeout, 60)
-            self._safe_driver_operation(self.driver.get, url)
-            
-            # Wait for page to render
+            self._safe(lambda d: d.set_page_load_timeout(60))
+            self._safe(lambda d, u: d.get(u), url)
             time.sleep(2)
-            
-            # Get page source - if DevTools disconnects, _safe_driver_operation will recreate driver and retry
-            page_source = self._safe_driver_operation(lambda: self.driver.page_source)
-            
+            page_source = self._safe(lambda d: d.page_source)
+
             if not page_source or len(page_source) < 100:
                 raise Exception("Page source is empty or too short")
-            
+
             print(f"✅ Got page source ({len(page_source)} chars)")
             return page_source
-            
+
         except Exception as e:
-            # If driver died, recreate and retry once
             if retry and self._is_dead_driver_error(e):
-                print("⚠️  Browser died. Restarting and retrying once...")
-                try:
-                    if self.driver:
-                        self.driver.quit()
-                except:
-                    pass
-                self.driver = None
-                self._setup_driver()
+                print("⚠️  Browser died. Recreating and retrying once...")
+                self._ensure_driver_valid(skip_check=True)
                 return self.fetch_product_page(url, retry=False)
-            
+
             print(f"❌ Error fetching {url} with browser: {e}")
             return None
     
