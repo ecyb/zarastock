@@ -91,6 +91,27 @@ class BrowserlessFetcher:
             print("✅ Connected to Browserless")
 
     def fetch_html(self, url: str, timeout_ms: int = 60000) -> Optional[str]:
+        # CRITICAL: Playwright sync API is not thread-safe
+        # Create a new connection for each request to avoid "cannot switch to a different thread" errors
+        # Close any existing connection first
+        try:
+            if self.browser:
+                try:
+                    self.browser.close()
+                except:
+                    pass
+            if self.pw:
+                try:
+                    self.pw.stop()
+                except:
+                    pass
+        except:
+            pass
+        
+        self.browser = None
+        self.pw = None
+        
+        # Create fresh connection
         self._connect()
 
         # Use stealth mode and anti-detection features
@@ -313,6 +334,20 @@ class BrowserlessFetcher:
             try:
                 page.close()
                 context.close()
+            except:
+                pass
+            # Close browser connection after each request to avoid threading issues
+            # We'll create a new one on the next request
+            try:
+                if self.browser:
+                    self.browser.close()
+                    self.browser = None
+            except:
+                pass
+            try:
+                if self.pw:
+                    self.pw.stop()
+                    self.pw = None
             except:
                 pass
 
