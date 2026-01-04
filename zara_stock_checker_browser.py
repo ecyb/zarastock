@@ -21,6 +21,8 @@ from datetime import datetime
 from typing import Dict, Optional
 import sys
 import os
+import shutil
+import glob
 
 # Import the parsing logic from the main checker
 from zara_stock_checker import ZaraStockChecker
@@ -40,13 +42,16 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
         self._setup_driver()
     
     def _setup_driver(self):
-        """Setup undetected Chrome WebDriver (local) or regular Selenium (Docker)."""
+        """Setup undetected Chrome WebDriver (local) or regular Selenium (Docker/Railway)."""
         try:
             import os
+            # Detect Docker or Railway (both should use regular Selenium)
             is_docker = os.path.exists('/.dockerenv') or os.environ.get('DOCKER_CONTAINER') == 'true'
+            is_railway = os.environ.get('RAILWAY_ENVIRONMENT') is not None or os.environ.get('RAILWAY_PROJECT_ID') is not None
+            is_cloud = is_docker or is_railway
             
-            # In Docker, use regular Selenium (more stable, headless anyway)
-            if is_docker:
+            # In Docker/Railway, use regular Selenium (more stable, headless anyway)
+            if is_cloud:
                 from selenium import webdriver
                 from selenium.webdriver.chrome.service import Service
                 from selenium.webdriver.chrome.options import Options
@@ -59,16 +64,29 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 chrome_options.add_argument('--disable-blink-features=AutomationControlled')
                 chrome_options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
                 
-                # Find Chromium binary
+                # Find Chromium binary (check Nix store paths for Railway)
                 chrome_binaries = [
                     '/usr/bin/chromium',
                     '/usr/bin/chromium-browser',
                     '/usr/bin/google-chrome-stable',
-                    '/usr/bin/google-chrome'
+                    '/usr/bin/google-chrome',
+                    '/nix/store/*/bin/chromium',  # Nix store path (Railway)
+                    '/run/current-system/sw/bin/chromium',  # NixOS path
                 ]
+                
+                # Also try to find via which command
+                chromium_which = shutil.which('chromium') or shutil.which('chromium-browser')
+                if chromium_which and chromium_which not in chrome_binaries:
+                    chrome_binaries.insert(0, chromium_which)
                 
                 chrome_bin = None
                 for bin_path in chrome_binaries:
+                    # Handle glob patterns for Nix store
+                    if '*' in bin_path:
+                        matches = glob.glob(bin_path)
+                        if matches:
+                            bin_path = matches[0]
+                    
                     if os.path.exists(bin_path):
                         chrome_bin = bin_path
                         chrome_options.binary_location = bin_path
@@ -76,18 +94,38 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                             print(f"  Using browser: {bin_path}")
                         break
                 
+                if not chrome_bin:
+                    # Last resort: try to find via which
+                    chromium_which = shutil.which('chromium') or shutil.which('chromium-browser')
+                    if chromium_which:
+                        chrome_bin = chromium_which
+                        chrome_options.binary_location = chromium_which
+                        if self.verbose:
+                            print(f"  Using browser (via which): {chromium_which}")
+                
                 # Find ChromeDriver
-                import shutil
                 chromedriver_path = shutil.which('chromedriver') or '/usr/bin/chromedriver'
+                
+                # Check Nix store for chromedriver
+                if not os.path.exists(chromedriver_path):
+                    import glob
+                    nix_chromedriver = glob.glob('/nix/store/*/bin/chromedriver')
+                    if nix_chromedriver:
+                        chromedriver_path = nix_chromedriver[0]
                 
                 if os.path.exists(chromedriver_path):
                     service = Service(chromedriver_path)
                     self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                    if self.verbose:
+                        print(f"  Using ChromeDriver: {chromedriver_path}")
                 else:
-                    # Let Selenium auto-detect
+                    # Let Selenium auto-detect (will use system chromedriver)
+                    if self.verbose:
+                        print("  ChromeDriver not found at expected path, using auto-detection")
                     self.driver = webdriver.Chrome(options=chrome_options)
                 
-                print("✅ Browser driver initialized (Selenium in Docker)")
+                env_name = "Railway" if is_railway else "Docker"
+                print(f"✅ Browser driver initialized (Selenium on {env_name})")
             else:
                 # Local: use undetected-chromedriver (better bot protection bypass)
                 options = uc.ChromeOptions()
@@ -129,8 +167,9 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
         except Exception as e:
             print(f"❌ Error setting up Chrome driver: {e}")
             print("Make sure Chrome/Chromium is installed")
-            if is_docker:
-                print("Docker tip: Make sure Chromium is installed in the Docker image")
+            if is_cloud:
+                env_name = "Railway" if is_railway else "Docker"
+                print(f"{env_name} tip: Make sure Chromium is installed in the build configuration")
             raise
     
     def _ensure_driver_valid(self):

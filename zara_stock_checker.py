@@ -581,11 +581,24 @@ class ZaraStockChecker:
         if not html:
             return {
                 'url': url,
-                'error': 'Failed to fetch page',
-                'in_stock': False
+                'error': 'Failed to fetch page - may be blocked by bot protection',
+                'in_stock': False,
+                'name': None,
+                'price': None
             }
         
         stock_info = self.parse_stock_info(html, url)
+        
+        # If parsing returned null values, it likely failed
+        if not stock_info.get('name') and len(html) > 0:
+            # Check if we got a bot protection page
+            if self._is_bot_protection_page(html):
+                stock_info['error'] = 'Bot protection detected - page blocked'
+            elif len(html) < 500:
+                stock_info['error'] = 'Page content too short - may be blocked or incomplete'
+            else:
+                stock_info['error'] = 'Failed to parse product information from page'
+        
         return stock_info
     
     def send_telegram_notification(self, product_info: Dict):

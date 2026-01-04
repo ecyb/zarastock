@@ -21,26 +21,27 @@ def get_checker():
         # Try browser version first (better bot protection bypass)
         try:
             from zara_stock_checker_browser import ZaraStockCheckerBrowser
-            checker = ZaraStockCheckerBrowser(verbose=False, headless=True)
+            checker = ZaraStockCheckerBrowser(verbose=True, headless=True)  # Enable verbose for Railway debugging
             print("✅ Using browser-based checker (undetected-chromedriver)")
-        except ImportError:
+        except ImportError as import_err:
             # Fallback to non-browser version (may be blocked by bot protection)
+            print(f"⚠️  Browser checker not available (ImportError: {import_err})")
             try:
                 from zara_stock_checker import ZaraStockChecker
-                checker = ZaraStockChecker(verbose=False)
+                checker = ZaraStockChecker(verbose=True)  # Enable verbose for Railway debugging
                 print("⚠️  Using non-browser checker (may be blocked by bot protection)")
             except Exception as e:
                 raise Exception(f"Failed to initialize any stock checker: {str(e)}")
         except Exception as e:
             import traceback
             error_details = traceback.format_exc()
-            print(f"Error initializing browser checker: {e}")
+            print(f"❌ Error initializing browser checker: {e}")
             print(f"Traceback: {error_details}")
             # Try fallback
             try:
                 from zara_stock_checker import ZaraStockChecker
-                checker = ZaraStockChecker(verbose=False)
-                print("⚠️  Fallback to non-browser checker")
+                checker = ZaraStockChecker(verbose=True)  # Enable verbose for Railway debugging
+                print("⚠️  Fallback to non-browser checker (browser automation failed)")
             except Exception as e2:
                 raise Exception(f"Failed to initialize stock checker: {str(e)}. Browser automation not available in this environment.")
     return checker
@@ -74,6 +75,16 @@ def check_stock():
             try:
                 stock_info = checker_instance.check_stock(product_url)
                 
+                # Check if parsing failed (null values indicate failure)
+                if not stock_info.get('name') and not stock_info.get('error'):
+                    # Add debug info if name/price are null
+                    stock_info['error'] = 'Failed to parse product information - page may be blocked or HTML structure changed'
+                    stock_info['debug'] = {
+                        'url_fetched': bool(stock_info.get('url')),
+                        'has_timestamp': bool(stock_info.get('timestamp')),
+                        'in_stock': stock_info.get('in_stock', False)
+                    }
+                
                 # Send notification every time (cron job behavior)
                 # But skip if skip_nostock_notification is true and item is out of stock
                 url = stock_info.get('url', product_url)
@@ -98,20 +109,35 @@ def check_stock():
                     'in_stock': stock_info.get('in_stock', False),
                     'available_sizes': stock_info.get('available_sizes', []),
                     'timestamp': stock_info.get('timestamp'),
-                    'notification_sent': url in notifications_sent
+                    'notification_sent': url in notifications_sent,
+                    'error': stock_info.get('error'),
+                    'debug': stock_info.get('debug')
                 })
             except Exception as e:
+                import traceback
+                error_trace = traceback.format_exc()
+                print(f"❌ Error checking {product_url}: {e}")
+                print(f"Traceback: {error_trace}")
                 results.append({
                     'url': product_url,
                     'error': str(e),
-                    'status': 'error'
+                    'status': 'error',
+                    'traceback': error_trace if checker_instance.verbose else None
                 })
+        
+        # Determine which checker is being used
+        try:
+            from zara_stock_checker_browser import ZaraStockCheckerBrowser
+            checker_type = 'browser' if isinstance(checker_instance, ZaraStockCheckerBrowser) else 'non-browser'
+        except ImportError:
+            checker_type = 'non-browser'
         
         return jsonify({
             'status': 'success',
             'results': results,
             'count': len(results),
-            'notifications_sent': len(notifications_sent)
+            'notifications_sent': len(notifications_sent),
+            'checker_type': checker_type
         })
     
     except Exception as e:
