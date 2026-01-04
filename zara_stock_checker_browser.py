@@ -57,21 +57,14 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 from selenium.webdriver.chrome.options import Options
                 
                 chrome_options = Options()
-                chrome_options.add_argument('--headless=new')
+                # Bare minimum set for Railway stability
+                chrome_options.add_argument('--headless')  # Use classic headless, not --headless=new
                 chrome_options.add_argument('--no-sandbox')
                 chrome_options.add_argument('--disable-dev-shm-usage')
                 chrome_options.add_argument('--disable-gpu')
-                chrome_options.add_argument('--disable-software-rasterizer')
-                chrome_options.add_argument('--disable-extensions')
-                chrome_options.add_argument('--disable-background-networking')
-                chrome_options.add_argument('--disable-background-timer-throttling')
-                chrome_options.add_argument('--disable-renderer-backgrounding')
-                chrome_options.add_argument('--disable-backgrounding-occluded-windows')
-                chrome_options.add_argument('--disable-ipc-flooding-protection')
-                chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-                chrome_options.add_argument('--disable-features=TranslateUI,BlinkGenPropertyTrees')
+                chrome_options.add_argument('--remote-debugging-port=9222')
+                chrome_options.add_argument('--window-size=1920,1080')
                 chrome_options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-                # Disable DevTools to prevent connection issues
                 chrome_options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
                 chrome_options.add_experimental_option('useAutomationExtension', False)
                 
@@ -183,8 +176,20 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 print(f"{env_name} tip: Make sure Chromium is installed in the build configuration")
             raise
     
+    def _is_dead_driver_error(self, e: Exception) -> bool:
+        """Check if error indicates driver is dead (window closed or DevTools disconnected)."""
+        msg = str(e).lower()
+        return any(x in msg for x in [
+            "no such window",
+            "target window already closed",
+            "web view not found",
+            "disconnected",
+            "not connected to devtools",
+            "devtools"
+        ])
+    
     def _ensure_driver_valid(self):
-        """Check if driver is valid, recreate if window is closed."""
+        """Check if driver is valid, recreate if window is closed or DevTools disconnected."""
         if not self.driver:
             self._setup_driver()
             return
@@ -193,10 +198,9 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
             # Try to get current window handle to check if driver is still valid
             _ = self.driver.current_window_handle
         except Exception as e:
-            # Driver is invalid (window closed), recreate it
-            error_msg = str(e).lower()
-            if 'no such window' in error_msg or 'target window already closed' in error_msg or 'web view not found' in error_msg:
-                print("⚠️  Browser window was closed, recreating driver...")
+            # Driver is invalid (window closed or DevTools disconnected), recreate it
+            if self._is_dead_driver_error(e):
+                print("⚠️  Driver is dead (window/DevTools). Recreating...")
                 try:
                     self.driver.quit()
                 except:
@@ -207,13 +211,12 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 raise
     
     def _safe_driver_operation(self, operation, *args, **kwargs):
-        """Execute a driver operation, retrying with fresh driver if window is closed."""
+        """Execute a driver operation, retrying with fresh driver if driver is dead."""
         try:
             return operation(*args, **kwargs)
         except Exception as e:
-            error_msg = str(e).lower()
-            if 'no such window' in error_msg or 'target window already closed' in error_msg or 'web view not found' in error_msg:
-                print("⚠️  Browser window closed during operation, recreating driver and retrying...")
+            if self._is_dead_driver_error(e):
+                print("⚠️  Driver died mid-operation. Recreating and retrying once...")
                 self._ensure_driver_valid()
                 # Retry the operation
                 return operation(*args, **kwargs)
@@ -221,315 +224,42 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 raise
     
     def fetch_product_page(self, url: str, retry: bool = True) -> Optional[str]:
-        """Fetch the HTML content using undetected Chrome."""
-        self._ensure_driver_valid()
-        
+        """Fetch the HTML content using browser automation."""
         try:
-            step_start = time.time()
+            self._ensure_driver_valid()
+            
+            # Use _safe_driver_operation for all driver calls
             print(f"🌐 Loading page with browser...")
-            # Set page load timeout
-            try:
-                self.driver.set_page_load_timeout(60)
-                self.driver.get(url)
-            except Exception as e:
-                error_msg = str(e).lower()
-                if 'no such window' in error_msg or 'target window already closed' in error_msg or 'web view not found' in error_msg:
-                    print(f"⚠️  Browser window closed during page load, recreating driver...")
-                    self._ensure_driver_valid()
-                    # Retry once
-                    self.driver.set_page_load_timeout(60)
-                    self.driver.get(url)
-                else:
-                    print(f"⚠️  Page load timeout or error: {e}")
-                    print("  Continuing with current page state...")
-            step_end = time.time()
-            print(f"  ⏱️  Page load: {step_end - step_start:.2f}s")
+            self._safe_driver_operation(self.driver.set_page_load_timeout, 60)
+            self._safe_driver_operation(self.driver.get, url)
             
-            step_start = time.time()
-            print("  Checking for modals...")
-            # Check for geolocation modal immediately and dismiss it fast
-            try:
-                from selenium.webdriver.common.by import By
-                from selenium.webdriver.support.ui import WebDriverWait
-                from selenium.webdriver.support import expected_conditions as EC
-                
-                # Look for geolocation modal immediately (no wait)
-                try:
-                    stay_button = WebDriverWait(self.driver, 1).until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[data-qa-action="stay-in-store"]'))
-                    )
-                    print("  🌍 Geolocation modal detected, dismissing immediately...")
-                    self.driver.execute_script("arguments[0].click();", stay_button)
-                    print("  ✅ Dismissed geolocation modal")
-                    time.sleep(0.5)  # Minimal wait after click
-                except:
-                    # Fallback: try close button
-                    try:
-                        close_button = WebDriverWait(self.driver, 0.5).until(
-                            EC.element_to_be_clickable((By.CSS_SELECTOR, 'button.zds-dialog-close-button'))
-                        )
-                        print("  🌍 Geolocation modal detected, closing...")
-                        self.driver.execute_script("arguments[0].click();", close_button)
-                        print("  ✅ Closed geolocation modal")
-                        time.sleep(0.5)
-                    except:
-                        pass
-            except Exception as e:
-                pass  # No modal, continue
-            step_end = time.time()
-            print(f"  ⏱️  Modal check/dismiss: {step_end - step_start:.2f}s")
+            # Wait for page to render
+            time.sleep(2)
             
-            step_start = time.time()
-            # Wait for JavaScript and bot protection to resolve (reduced time)
-            time.sleep(2)  # Reduced from 3 seconds
-            step_end = time.time()
-            print(f"  ⏱️  Wait for JS/bot protection: {step_end - step_start:.2f}s")
+            # Get page source - if DevTools disconnects, _safe_driver_operation will recreate driver and retry
+            page_source = self._safe_driver_operation(lambda: self.driver.page_source)
             
-            # Get page source EARLY before DevTools might disconnect
-            # This is critical for Railway where DevTools disconnects easily
-            step_start = time.time()
-            print("  Getting page source early (before other operations)...")
-            page_source = None
-            try:
-                page_source = self.driver.page_source
-                print(f"  ✅ Got page source early ({len(page_source)} chars)")
-            except Exception as e:
-                error_msg = str(e).lower()
-                if 'devtools' in error_msg or 'disconnected' in error_msg or 'not connected' in error_msg:
-                    print("  ⚠️  DevTools already disconnected, will try to continue...")
-                    # Try to get it via execute_script as fallback
-                    try:
-                        page_source = self.driver.execute_script("return document.documentElement.outerHTML;")
-                        print(f"  ✅ Got page source via execute_script ({len(page_source)} chars)")
-                    except:
-                        print("  ❌ Could not get page source, will try again later...")
-                else:
-                    raise
-            step_end = time.time()
-            print(f"  ⏱️  Early page source: {step_end - step_start:.2f}s")
+            if not page_source or len(page_source) < 100:
+                raise Exception("Page source is empty or too short")
             
-            step_start = time.time()
-            # Simulate human-like behavior: scroll a bit (faster)
-            try:
-                self.driver.execute_script("window.scrollTo(0, 300);")
-                time.sleep(0.3)
-                self.driver.execute_script("window.scrollTo(0, 0);")
-                time.sleep(0.3)
-            except Exception as e:
-                error_msg = str(e).lower()
-                if 'no such window' in error_msg or 'target window already closed' in error_msg or 'devtools' in error_msg or 'disconnected' in error_msg:
-                    print("⚠️  Window/DevTools issue during scroll, using early page source...")
-                    # If we already have page_source, continue with it
-                    if page_source:
-                        pass  # Continue with early page source
-                    else:
-                        raise  # Let the outer try-except handle it
-                pass  # Other errors, continue
-            step_end = time.time()
-            print(f"  ⏱️  Scroll simulation: {step_end - step_start:.2f}s")
-            
-            # Wait for specific elements that indicate the page loaded
-            step_start = time.time()
-            print("  Checking page content...")
-            try:
-                from selenium.webdriver.common.by import By
-                from selenium.webdriver.support.ui import WebDriverWait
-                from selenium.webdriver.support import expected_conditions as EC
-                
-                # Wait for product page elements (with shorter timeout)
-                WebDriverWait(self.driver, 5).until(
-                    lambda d: 'product' in d.current_url.lower() or 
-                             d.find_elements(By.CLASS_NAME, 'product-detail') or
-                             d.find_elements(By.CLASS_NAME, 'size-selector') or
-                             'ZW COLLECTION' in (page_source or '') or
-                             'WOOL BLEND' in (page_source or '')
-                )
-                print("  ✅ Product page detected")
-            except Exception as e:
-                if self.verbose:
-                    print(f"  ⚠️  Wait timeout: {e}, continuing anyway...")
-                pass  # Continue even if wait times out
-            step_end = time.time()
-            print(f"  ⏱️  Page content check: {step_end - step_start:.2f}s")
-            
-            # Quick check: Is the item out of stock? (speed optimization)
-            step_start = time.time()
-            print("  Checking stock status...")
-            try:
-                from selenium.webdriver.common.by import By
-                # Look for "OUT OF STOCK" button - this means we can skip clicking size selector
-                try:
-                    out_of_stock_button = self.driver.find_element(
-                        By.XPATH, 
-                        "//button[contains(., 'OUT OF STOCK')]"
-                    )
-                    if out_of_stock_button:
-                        print(f"  ❌ Item is OUT OF STOCK (detected early, skipping size selector click)")
-                        step_end = time.time()
-                        print(f"  ⏱️  Stock status check: {step_end - step_start:.2f}s")
-                        # Return page source - parser will detect it's out of stock
-                        return self.driver.page_source
-                except:
-                    # Button not found, item might be in stock, continue
-                    pass
-            except Exception as e:
-                if self.verbose:
-                    print(f"  (Stock check error: {e}, continuing...)")
-            step_end = time.time()
-            print(f"  ⏱️  Stock status check: {step_end - step_start:.2f}s")
-            
-            # Try to click "Select a size" button to open the size selector popup
-            step_start = time.time()
-            print("  Looking for size selector button...")
-            try:
-                from selenium.webdriver.common.by import By
-                from selenium.webdriver.support.ui import WebDriverWait
-                from selenium.webdriver.support import expected_conditions as EC
-                
-                # Look for the "Select a size" or "Add to cart" button
-                size_button_selectors = [
-                    (By.XPATH, "//button[contains(text(), 'Select a size')]"),
-                    (By.XPATH, "//button[contains(@aria-label, 'Select a size')]"),
-                    (By.CSS_SELECTOR, "button[data-qa-action='add-to-cart']"),
-                    (By.CSS_SELECTOR, "button.product-detail-cart-buttons__button"),
-                ]
-                
-                button_found = False
-                for selector_type, selector in size_button_selectors:
-                    try:
-                        button = WebDriverWait(self.driver, 2).until(
-                            EC.element_to_be_clickable((selector_type, selector))
-                        )
-                        print("  ✅ Found size button, clicking to open popup...")
-                        self.driver.execute_script("arguments[0].click();", button)
-                        time.sleep(1.5)  # Wait for popup to open (reduced from 2s)
-                        button_found = True
-                        break
-                    except:
-                        continue
-                
-                if not button_found:
-                    print("  ⚠️  Size button not found, sizes may be in page HTML already")
-            except Exception as e:
-                if self.verbose:
-                    print(f"  Could not click size button: {e}")
-            step_end = time.time()
-            print(f"  ⏱️  Size button click: {step_end - step_start:.2f}s")
-            
-            # Additional wait for dynamic content
-            step_start = time.time()
-            print("  Getting final page source...")
-            time.sleep(0.5)  # Reduced from 1s
-            
-            # If we already have page_source from early capture, try to update it
-            # But if DevTools disconnects, use the early one
-            if not page_source:
-                try:
-                    page_source = self.driver.page_source
-                    print(f"  ✅ Got fresh page source ({len(page_source)} chars)")
-                except Exception as e:
-                    error_msg = str(e).lower()
-                    if 'devtools' in error_msg or 'disconnected' in error_msg or 'not connected' in error_msg:
-                        print("⚠️  DevTools disconnected, cannot get fresh page source")
-                        # If we don't have early page_source, this is a problem
-                        if not page_source:
-                            raise Exception("DevTools disconnected and no early page source available")
-                    else:
-                        raise
-            else:
-                # Try to get updated page source, but fall back to early one if DevTools disconnected
-                try:
-                    updated_source = self.driver.page_source
-                    # Use updated source if it's longer (more complete)
-                    if len(updated_source) > len(page_source):
-                        page_source = updated_source
-                        print(f"  ✅ Updated page source ({len(page_source)} chars)")
-                    else:
-                        print(f"  ℹ️  Using early page source ({len(page_source)} chars) - DevTools may have disconnected")
-                except Exception as e:
-                    error_msg = str(e).lower()
-                    if 'devtools' in error_msg or 'disconnected' in error_msg:
-                        print(f"  ℹ️  DevTools disconnected, using early page source ({len(page_source)} chars)")
-                    else:
-                        # Other error, but we have early page_source, so continue
-                        print(f"  ⚠️  Error getting updated source: {e}, using early page source")
-            step_end = time.time()
-            print(f"  ⏱️  Get page source: {step_end - step_start:.2f}s (length: {len(page_source)} chars)")
-            
-            # Check for bot protection - be more lenient
-            is_blocked = (
-                len(page_source) < 500 or 
-                'Access Denied' in page_source or 
-                (hasattr(self, '_is_bot_protection_page') and self._is_bot_protection_page(page_source)) or
-                'Please enable JavaScript' in page_source or
-                'challenge' in page_source.lower()
-            )
-            
-            if is_blocked:
-                print("⏳ Bot protection detected, trying anti-detection strategies...")
-                
-                # Try multiple anti-detection strategies
-                for attempt in range(3):
-                    wait_time = 3 + attempt * 2  # Progressive wait: 3s, 5s, 7s
-                    print(f"  Attempt {attempt + 1}/3: waiting {wait_time}s...")
-                    time.sleep(wait_time)
-                    
-                    # Human-like scrolling pattern
-                    try:
-                        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight / 3);")
-                        time.sleep(1)
-                        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight * 2/3);")
-                        time.sleep(1)
-                        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                        time.sleep(1)
-                        
-                        # Try clicking somewhere to show human interaction
-                        try:
-                            body = self.driver.find_element('tag name', 'body')
-                            self.driver.execute_script("arguments[0].click();", body)
-                        except:
-                            pass
-                    except Exception as e:
-                        error_msg = str(e).lower()
-                        if 'no such window' in error_msg or 'target window already closed' in error_msg:
-                            print("⚠️  Window closed during bot protection handling, will recreate driver...")
-                            raise  # Let the outer try-except handle it
-                        pass  # Other errors, continue
-                    
-                    time.sleep(2)
-                    page_source = self.driver.page_source
-                    
-                    # Check if we got past the protection
-                    if len(page_source) > 1000 and 'Access Denied' not in page_source:
-                        print(f"  ✅ Bot protection bypassed after {attempt + 1} attempt(s)")
-                        break
-                
-                if len(page_source) < 500 or 'Access Denied' in page_source:
-                    print("⚠️  Still seeing bot protection - page may be blocked.")
-                    print(f"  Page length: {len(page_source)} chars")
-                    if not self.headless:
-                        print("   Browser window is open - you may need to manually complete the challenge.")
-                        try:
-                            input("Press Enter after completing any challenges (or Ctrl+C to skip)...")
-                            page_source = self.driver.page_source
-                        except KeyboardInterrupt:
-                            print("   Skipping manual challenge...")
-            
+            print(f"✅ Got page source ({len(page_source)} chars)")
             return page_source
+            
         except Exception as e:
-            error_msg = str(e).lower()
-            if retry and ('no such window' in error_msg or 'target window already closed' in error_msg or 'web view not found' in error_msg):
-                print(f"⚠️  Browser window closed during fetch, retrying once...")
+            # If driver died, recreate and retry once
+            if retry and self._is_dead_driver_error(e):
+                print("⚠️  Browser died. Restarting and retrying once...")
                 try:
-                    self._ensure_driver_valid()
-                    # Retry the entire fetch (with retry=False to prevent infinite recursion)
-                    return self.fetch_product_page(url, retry=False)
-                except Exception as retry_error:
-                    print(f"❌ Retry also failed: {retry_error}")
-                    return None
-            else:
-                print(f"❌ Error fetching {url} with browser: {e}")
-                return None
+                    if self.driver:
+                        self.driver.quit()
+                except:
+                    pass
+                self.driver = None
+                self._setup_driver()
+                return self.fetch_product_page(url, retry=False)
+            
+            print(f"❌ Error fetching {url} with browser: {e}")
+            return None
     
     def check_stock(self, url: str) -> Dict:
         """Check stock for a single product URL."""
