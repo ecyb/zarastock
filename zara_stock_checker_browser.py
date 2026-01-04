@@ -133,21 +133,65 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 print("Docker tip: Make sure Chromium is installed in the Docker image")
             raise
     
-    def fetch_product_page(self, url: str) -> Optional[str]:
-        """Fetch the HTML content using undetected Chrome."""
+    def _ensure_driver_valid(self):
+        """Check if driver is valid, recreate if window is closed."""
         if not self.driver:
             self._setup_driver()
+            return
+        
+        try:
+            # Try to get current window handle to check if driver is still valid
+            _ = self.driver.current_window_handle
+        except Exception as e:
+            # Driver is invalid (window closed), recreate it
+            error_msg = str(e).lower()
+            if 'no such window' in error_msg or 'target window already closed' in error_msg or 'web view not found' in error_msg:
+                print("⚠️  Browser window was closed, recreating driver...")
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+                self.driver = None
+                self._setup_driver()
+            else:
+                raise
+    
+    def _safe_driver_operation(self, operation, *args, **kwargs):
+        """Execute a driver operation, retrying with fresh driver if window is closed."""
+        try:
+            return operation(*args, **kwargs)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if 'no such window' in error_msg or 'target window already closed' in error_msg or 'web view not found' in error_msg:
+                print("⚠️  Browser window closed during operation, recreating driver and retrying...")
+                self._ensure_driver_valid()
+                # Retry the operation
+                return operation(*args, **kwargs)
+            else:
+                raise
+    
+    def fetch_product_page(self, url: str, retry: bool = True) -> Optional[str]:
+        """Fetch the HTML content using undetected Chrome."""
+        self._ensure_driver_valid()
         
         try:
             step_start = time.time()
             print(f"🌐 Loading page with browser...")
             # Set page load timeout
-            self.driver.set_page_load_timeout(60)
             try:
+                self.driver.set_page_load_timeout(60)
                 self.driver.get(url)
             except Exception as e:
-                print(f"⚠️  Page load timeout or error: {e}")
-                print("  Continuing with current page state...")
+                error_msg = str(e).lower()
+                if 'no such window' in error_msg or 'target window already closed' in error_msg or 'web view not found' in error_msg:
+                    print(f"⚠️  Browser window closed during page load, recreating driver...")
+                    self._ensure_driver_valid()
+                    # Retry once
+                    self.driver.set_page_load_timeout(60)
+                    self.driver.get(url)
+                else:
+                    print(f"⚠️  Page load timeout or error: {e}")
+                    print("  Continuing with current page state...")
             step_end = time.time()
             print(f"  ⏱️  Page load: {step_end - step_start:.2f}s")
             
@@ -193,10 +237,17 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
             
             step_start = time.time()
             # Simulate human-like behavior: scroll a bit (faster)
-            self.driver.execute_script("window.scrollTo(0, 300);")
-            time.sleep(0.3)
-            self.driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(0.3)
+            try:
+                self.driver.execute_script("window.scrollTo(0, 300);")
+                time.sleep(0.3)
+                self.driver.execute_script("window.scrollTo(0, 0);")
+                time.sleep(0.3)
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'no such window' in error_msg or 'target window already closed' in error_msg:
+                    print("⚠️  Window closed during scroll, will recreate driver...")
+                    raise  # Let the outer try-except handle it
+                pass  # Other errors, continue
             step_end = time.time()
             print(f"  ⏱️  Scroll simulation: {step_end - step_start:.2f}s")
             
@@ -294,7 +345,20 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
             time.sleep(0.5)  # Reduced from 1s
             
             # Check if we're still on bot protection page
-            page_source = self.driver.page_source
+            try:
+                page_source = self.driver.page_source
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'no such window' in error_msg or 'target window already closed' in error_msg or 'web view not found' in error_msg:
+                    print("⚠️  Browser window closed while getting page source, recreating driver...")
+                    self._ensure_driver_valid()
+                    # Retry: reload the page
+                    self.driver.set_page_load_timeout(60)
+                    self.driver.get(url)
+                    time.sleep(2)  # Wait for page to load
+                    page_source = self.driver.page_source
+                else:
+                    raise
             step_end = time.time()
             print(f"  ⏱️  Get page source: {step_end - step_start:.2f}s (length: {len(page_source)} chars)")
             
@@ -317,19 +381,26 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                     time.sleep(wait_time)
                     
                     # Human-like scrolling pattern
-                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight / 3);")
-                    time.sleep(1)
-                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight * 2/3);")
-                    time.sleep(1)
-                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                    time.sleep(1)
-                    
-                    # Try clicking somewhere to show human interaction
                     try:
-                        body = self.driver.find_element('tag name', 'body')
-                        self.driver.execute_script("arguments[0].click();", body)
-                    except:
-                        pass
+                        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight / 3);")
+                        time.sleep(1)
+                        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight * 2/3);")
+                        time.sleep(1)
+                        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                        time.sleep(1)
+                        
+                        # Try clicking somewhere to show human interaction
+                        try:
+                            body = self.driver.find_element('tag name', 'body')
+                            self.driver.execute_script("arguments[0].click();", body)
+                        except:
+                            pass
+                    except Exception as e:
+                        error_msg = str(e).lower()
+                        if 'no such window' in error_msg or 'target window already closed' in error_msg:
+                            print("⚠️  Window closed during bot protection handling, will recreate driver...")
+                            raise  # Let the outer try-except handle it
+                        pass  # Other errors, continue
                     
                     time.sleep(2)
                     page_source = self.driver.page_source
@@ -352,8 +423,19 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
             
             return page_source
         except Exception as e:
-            print(f"❌ Error fetching {url} with browser: {e}")
-            return None
+            error_msg = str(e).lower()
+            if retry and ('no such window' in error_msg or 'target window already closed' in error_msg or 'web view not found' in error_msg):
+                print(f"⚠️  Browser window closed during fetch, retrying once...")
+                try:
+                    self._ensure_driver_valid()
+                    # Retry the entire fetch (with retry=False to prevent infinite recursion)
+                    return self.fetch_product_page(url, retry=False)
+                except Exception as retry_error:
+                    print(f"❌ Retry also failed: {retry_error}")
+                    return None
+            else:
+                print(f"❌ Error fetching {url} with browser: {e}")
+                return None
     
     def check_stock(self, url: str) -> Dict:
         """Check stock for a single product URL."""

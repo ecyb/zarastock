@@ -68,6 +68,14 @@ class ZaraStockChecker:
                 "check_interval": 300  # 5 minutes
             }
         
+        # Override products from environment variable if set (for Railway/deployment)
+        products_env = os.getenv('ZARA_PRODUCTS')
+        if products_env:
+            # Support comma-separated or newline-separated URLs
+            products = [p.strip() for p in products_env.replace('\n', ',').split(',') if p.strip()]
+            if products:
+                config['products'] = products
+        
         # Override with environment variables from .env file
         # Supports: api_key, TELEGRAM_BOT_TOKEN, TELEGRAM_API_KEY
         telegram_token = os.getenv('api_key') or os.getenv('TELEGRAM_BOT_TOKEN') or os.getenv('TELEGRAM_API_KEY')
@@ -91,6 +99,12 @@ class ZaraStockChecker:
                 config['telegram']['chat_ids'] = []
             if telegram_chat_id not in config['telegram']['chat_ids']:
                 config['telegram']['chat_ids'].append(telegram_chat_id)
+        
+        # Override skip_nostock_notification from environment variable if set
+        skip_nostock_env = os.getenv('SKIP_NOSTOCK_NOTIFICATION')
+        if skip_nostock_env is not None:
+            # Support "true", "1", "yes" as true, anything else as false
+            config['skip_nostock_notification'] = skip_nostock_env.lower() in ('true', '1', 'yes')
         
         return config
     

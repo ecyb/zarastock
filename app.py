@@ -7,6 +7,7 @@ Can be called via HTTP requests (e.g., from cron jobs)
 from flask import Flask, jsonify, request
 import os
 import sys
+import argparse
 
 app = Flask(__name__)
 
@@ -63,17 +64,41 @@ def check_stock():
                 'status': 'error'
             }), 400
         
+        # Get skip_nostock_notification setting (default: false - send all notifications)
+        skip_nostock = checker_instance.config.get('skip_nostock_notification', False)
+        
         results = []
+        notifications_sent = []
+        
         for product_url in products:
             try:
                 stock_info = checker_instance.check_stock(product_url)
+                
+                # Send notification every time (cron job behavior)
+                # But skip if skip_nostock_notification is true and item is out of stock
+                url = stock_info.get('url', product_url)
+                current_in_stock = stock_info.get('in_stock', False)
+                should_send = True
+                
+                if skip_nostock and not current_in_stock:
+                    # Skip notification if item is out of stock and skip_nostock_notification is true
+                    should_send = False
+                
+                if should_send:
+                    try:
+                        checker_instance.send_notification(stock_info)
+                        notifications_sent.append(url)
+                    except Exception as notify_error:
+                        print(f"⚠️  Failed to send notification for {url}: {notify_error}")
+                
                 results.append({
                     'url': stock_info.get('url'),
                     'name': stock_info.get('name'),
                     'price': stock_info.get('price'),
                     'in_stock': stock_info.get('in_stock', False),
                     'available_sizes': stock_info.get('available_sizes', []),
-                    'timestamp': stock_info.get('timestamp')
+                    'timestamp': stock_info.get('timestamp'),
+                    'notification_sent': url in notifications_sent
                 })
             except Exception as e:
                 results.append({
@@ -85,7 +110,8 @@ def check_stock():
         return jsonify({
             'status': 'success',
             'results': results,
-            'count': len(results)
+            'count': len(results),
+            'notifications_sent': len(notifications_sent)
         })
     
     except Exception as e:
@@ -107,6 +133,27 @@ def check_single(url):
         
         stock_info = checker_instance.check_stock(url)
         
+        # Get skip_nostock_notification setting (default: false - send all notifications)
+        skip_nostock = checker_instance.config.get('skip_nostock_notification', False)
+        
+        # Send notification every time (cron job behavior)
+        # But skip if skip_nostock_notification is true and item is out of stock
+        product_url = stock_info.get('url', url)
+        current_in_stock = stock_info.get('in_stock', False)
+        should_send = True
+        
+        if skip_nostock and not current_in_stock:
+            # Skip notification if item is out of stock and skip_nostock_notification is true
+            should_send = False
+        
+        notification_sent = False
+        if should_send:
+            try:
+                checker_instance.send_notification(stock_info)
+                notification_sent = True
+            except Exception as notify_error:
+                print(f"⚠️  Failed to send notification for {product_url}: {notify_error}")
+        
         return jsonify({
             'status': 'success',
             'url': stock_info.get('url'),
@@ -114,7 +161,8 @@ def check_single(url):
             'price': stock_info.get('price'),
             'in_stock': stock_info.get('in_stock', False),
             'available_sizes': stock_info.get('available_sizes', []),
-            'timestamp': stock_info.get('timestamp')
+            'timestamp': stock_info.get('timestamp'),
+            'notification_sent': notification_sent
         })
     
     except Exception as e:
@@ -127,9 +175,17 @@ def check_single(url):
 # Vercel will automatically detect the 'app' variable
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Zara Stock Checker API Server')
+    parser.add_argument('--port', '-p', type=int, default=None,
+                        help='Port to run the server on (default: 5000 or PORT env var)')
+    parser.add_argument('--host', type=str, default=None,
+                        help='Host to bind to (default: 0.0.0.0 or HOST env var)')
+    args = parser.parse_args()
+    
     # Railway and other platforms set PORT env var
-    port = int(os.environ.get('PORT', 5000))
-    host = os.environ.get('HOST', '0.0.0.0')
+    # Command-line argument takes precedence over env var
+    port = args.port if args.port is not None else int(os.environ.get('PORT', 5000))
+    host = args.host if args.host is not None else os.environ.get('HOST', '0.0.0.0')
     
     print(f"🚀 Starting Zara Stock Checker API server on {host}:{port}")
     print(f"📡 Endpoints:")

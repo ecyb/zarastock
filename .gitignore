@@ -17,6 +17,7 @@ config.json
 last_check.html
 *.log
 logs/
+api_state.json
 
 # IDE
 .vscode/
