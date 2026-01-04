@@ -23,6 +23,7 @@ import sys
 import os
 import shutil
 import glob
+import atexit
 
 # Import the parsing logic from the main checker
 from zara_stock_checker import ZaraStockChecker
@@ -40,6 +41,8 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
         self.headless = headless
         self.driver = None
         self._setup_driver()
+        # Register cleanup on exit (more reliable than __del__)
+        atexit.register(self.cleanup)
     
     def _setup_driver(self):
         """Setup undetected Chrome WebDriver (local) or regular Selenium (Docker/Railway)."""
@@ -67,7 +70,7 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 chrome_options.add_argument('--window-size=1920,1080')
                 # Use unique user-data-dir per process to avoid profile locks
                 chrome_options.add_argument(f'--user-data-dir=/tmp/chrome-data-{os.getpid()}')
-                chrome_options.add_argument('--disk-cache-dir=/tmp/chrome-cache')
+                chrome_options.add_argument(f'--disk-cache-dir=/tmp/chrome-cache-{os.getpid()}')
                 # Additional stability flags for containers
                 chrome_options.add_argument('--disable-features=VizDisplayCompositor')
                 chrome_options.add_argument('--disable-ipc-flooding-protection')
@@ -75,7 +78,8 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 chrome_options.add_argument('--enable-logging=stderr')
                 chrome_options.add_argument('--v=1')
                 chrome_options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-                chrome_options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
+                # Don't exclude 'enable-logging' - we want logging enabled!
+                chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
                 chrome_options.add_experimental_option('useAutomationExtension', False)
                 
                 # Find Chromium binary (check Nix store paths for Railway)
@@ -247,13 +251,13 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 use the current self.driver after restart.
         """
         for attempt in range(2):
-            self._ensure_driver_valid()
+            # On second attempt, skip check since we know driver is dead
+            self._ensure_driver_valid(skip_check=(attempt == 1))
             try:
                 return fn(self.driver, *args, **kwargs)
             except Exception as e:
                 if self._is_dead_driver_error(e) and attempt == 0:
                     print("⚠️  Driver died mid-op. Recreating...")
-                    self._ensure_driver_valid(skip_check=True)
                     continue
                 raise
     
@@ -279,6 +283,18 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 return self.fetch_product_page(url, retry=False)
 
             print(f"❌ Error fetching {url} with browser: {e}")
+            
+            # Print chromedriver log if it exists (so we can see it in Railway logs)
+            if os.path.exists("/tmp/chromedriver.log"):
+                try:
+                    with open("/tmp/chromedriver.log", "r") as f:
+                        tail = f.readlines()[-80:]
+                    print("---- chromedriver.log (tail) ----")
+                    print("".join(tail))
+                    print("---- end chromedriver.log ----")
+                except:
+                    pass
+            
             return None
     
     def check_stock(self, url: str) -> Dict:
@@ -364,13 +380,17 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
             print(f"\nWaiting {interval} seconds before next check...\n")
             time.sleep(interval)
     
-    def __del__(self):
-        """Cleanup: close the driver."""
-        if self.driver:
+    def cleanup(self):
+        """Cleanup: close browser (called by atexit, more reliable than __del__)."""
+        if hasattr(self, 'driver') and self.driver:
             try:
                 self.driver.quit()
             except:
                 pass
+    
+    def __del__(self):
+        """Cleanup: close the driver (fallback, but atexit is more reliable)."""
+        self.cleanup()
 
 
 def main():
