@@ -53,17 +53,25 @@ def health():
 
 @app.route('/check', methods=['POST', 'GET'])
 def check_stock():
-    """Check stock for all products in config."""
+    """Check stock for all products in config, or a single URL if provided."""
     try:
         checker_instance = get_checker()
         
-        # Get products from config
-        products = checker_instance.config.get('products', [])
-        if not products:
-            return jsonify({
-                'error': 'No products configured',
-                'status': 'error'
-            }), 400
+        # Check if a URL was passed as query parameter or in POST data
+        url_param = request.args.get('url') or request.form.get('url') or request.json.get('url') if request.is_json else None
+        
+        # If URL is provided, use only that URL and ignore config
+        if url_param:
+            products = [url_param]
+        else:
+            # Get products from config
+            products = checker_instance.config.get('products', [])
+            if not products:
+                return jsonify({
+                    'error': 'No products configured and no URL provided',
+                    'status': 'error',
+                    'hint': 'Provide a URL via ?url=<product_url> or configure products in config.json/ZARA_PRODUCTS'
+                }), 400
         
         # Get skip_nostock_notification setting (default: false - send all notifications)
         skip_nostock = checker_instance.config.get('skip_nostock_notification', False)
@@ -217,9 +225,11 @@ if __name__ == '__main__':
     print(f"📡 Endpoints:")
     print(f"   GET/POST /health - Health check")
     print(f"   GET/POST /check - Check all products from config")
-    print(f"   GET/POST /check/<url> - Check single product")
+    print(f"   GET/POST /check?url=<product_url> - Check single product (ignores config)")
+    print(f"   GET/POST /check/<url> - Check single product (alternative)")
     print(f"\n💡 Example cron job:")
     print(f"   curl http://localhost:{port}/check")
+    print(f"   curl http://localhost:{port}/check?url=https://www.zara.com/uk/en/product.html")
     
     app.run(host=host, port=port, debug=False)
 
