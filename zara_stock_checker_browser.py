@@ -285,6 +285,29 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
             step_end = time.time()
             print(f"  ⏱️  Wait for JS/bot protection: {step_end - step_start:.2f}s")
             
+            # Get page source EARLY before DevTools might disconnect
+            # This is critical for Railway where DevTools disconnects easily
+            step_start = time.time()
+            print("  Getting page source early (before other operations)...")
+            page_source = None
+            try:
+                page_source = self.driver.page_source
+                print(f"  ✅ Got page source early ({len(page_source)} chars)")
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'devtools' in error_msg or 'disconnected' in error_msg or 'not connected' in error_msg:
+                    print("  ⚠️  DevTools already disconnected, will try to continue...")
+                    # Try to get it via execute_script as fallback
+                    try:
+                        page_source = self.driver.execute_script("return document.documentElement.outerHTML;")
+                        print(f"  ✅ Got page source via execute_script ({len(page_source)} chars)")
+                    except:
+                        print("  ❌ Could not get page source, will try again later...")
+                else:
+                    raise
+            step_end = time.time()
+            print(f"  ⏱️  Early page source: {step_end - step_start:.2f}s")
+            
             step_start = time.time()
             # Simulate human-like behavior: scroll a bit (faster)
             try:
@@ -294,9 +317,13 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 time.sleep(0.3)
             except Exception as e:
                 error_msg = str(e).lower()
-                if 'no such window' in error_msg or 'target window already closed' in error_msg:
-                    print("⚠️  Window closed during scroll, will recreate driver...")
-                    raise  # Let the outer try-except handle it
+                if 'no such window' in error_msg or 'target window already closed' in error_msg or 'devtools' in error_msg or 'disconnected' in error_msg:
+                    print("⚠️  Window/DevTools issue during scroll, using early page source...")
+                    # If we already have page_source, continue with it
+                    if page_source:
+                        pass  # Continue with early page source
+                    else:
+                        raise  # Let the outer try-except handle it
                 pass  # Other errors, continue
             step_end = time.time()
             print(f"  ⏱️  Scroll simulation: {step_end - step_start:.2f}s")
@@ -314,8 +341,8 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                     lambda d: 'product' in d.current_url.lower() or 
                              d.find_elements(By.CLASS_NAME, 'product-detail') or
                              d.find_elements(By.CLASS_NAME, 'size-selector') or
-                             'ZW COLLECTION' in d.page_source or
-                             'WOOL BLEND' in d.page_source
+                             'ZW COLLECTION' in (page_source or '') or
+                             'WOOL BLEND' in (page_source or '')
                 )
                 print("  ✅ Product page detected")
             except Exception as e:
@@ -391,42 +418,41 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
             
             # Additional wait for dynamic content
             step_start = time.time()
-            print("  Getting page source...")
+            print("  Getting final page source...")
             time.sleep(0.5)  # Reduced from 1s
             
-            # Check if we're still on bot protection page
-            try:
-                page_source = self.driver.page_source
-            except Exception as e:
-                error_msg = str(e).lower()
-                if 'no such window' in error_msg or 'target window already closed' in error_msg or 'web view not found' in error_msg:
-                    print("⚠️  Browser window closed while getting page source, recreating driver...")
-                    self._ensure_driver_valid()
-                    # Retry: reload the page
-                    self.driver.set_page_load_timeout(60)
-                    self.driver.get(url)
-                    time.sleep(2)  # Wait for page to load
+            # If we already have page_source from early capture, try to update it
+            # But if DevTools disconnects, use the early one
+            if not page_source:
+                try:
                     page_source = self.driver.page_source
-                elif 'devtools' in error_msg or 'disconnected' in error_msg or 'not connected' in error_msg:
-                    # DevTools connection issue - try to get page source via execute_script
-                    print("⚠️  DevTools connection issue, trying alternative method to get page source...")
-                    try:
-                        page_source = self.driver.execute_script("return document.documentElement.outerHTML;")
-                        print("✅ Successfully got page source via execute_script")
-                    except Exception as script_error:
-                        # Last resort: recreate driver and retry
-                        print(f"⚠️  Alternative method failed ({script_error}), recreating driver...")
-                        self._ensure_driver_valid()
-                        self.driver.set_page_load_timeout(60)
-                        self.driver.get(url)
-                        time.sleep(3)  # Wait longer for page to load
-                        try:
-                            page_source = self.driver.page_source
-                        except:
-                            # Final fallback
-                            page_source = self.driver.execute_script("return document.documentElement.outerHTML;")
-                else:
-                    raise
+                    print(f"  ✅ Got fresh page source ({len(page_source)} chars)")
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if 'devtools' in error_msg or 'disconnected' in error_msg or 'not connected' in error_msg:
+                        print("⚠️  DevTools disconnected, cannot get fresh page source")
+                        # If we don't have early page_source, this is a problem
+                        if not page_source:
+                            raise Exception("DevTools disconnected and no early page source available")
+                    else:
+                        raise
+            else:
+                # Try to get updated page source, but fall back to early one if DevTools disconnected
+                try:
+                    updated_source = self.driver.page_source
+                    # Use updated source if it's longer (more complete)
+                    if len(updated_source) > len(page_source):
+                        page_source = updated_source
+                        print(f"  ✅ Updated page source ({len(page_source)} chars)")
+                    else:
+                        print(f"  ℹ️  Using early page source ({len(page_source)} chars) - DevTools may have disconnected")
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if 'devtools' in error_msg or 'disconnected' in error_msg:
+                        print(f"  ℹ️  DevTools disconnected, using early page source ({len(page_source)} chars)")
+                    else:
+                        # Other error, but we have early page_source, so continue
+                        print(f"  ⚠️  Error getting updated source: {e}, using early page source")
             step_end = time.time()
             print(f"  ⏱️  Get page source: {step_end - step_start:.2f}s (length: {len(page_source)} chars)")
             
