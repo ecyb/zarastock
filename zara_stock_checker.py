@@ -505,17 +505,50 @@ class ZaraStockChecker:
                                 print(f"  Found price from script: {product_data['price']}")
                             break
         
-        # Check for "OUT OF STOCK" text in buttons (early detection for speed)
+        # Check for stock status indicators in the page
         out_of_stock_detected = False
-        # Check for button with "OUT OF STOCK" text
+        in_stock_detected = False
+        
+        # Check for "OUT OF STOCK" text in buttons
         buttons = soup.find_all('button', class_=re.compile(r'product-detail', re.I))
         for btn in buttons:
-            btn_text = btn.get_text(strip=True)
-            if 'OUT OF STOCK' in btn_text.upper():
+            btn_text = btn.get_text(strip=True).upper()
+            if 'OUT OF STOCK' in btn_text:
                 out_of_stock_detected = True
                 if self.verbose:
                     print("  ❌ Found 'OUT OF STOCK' button - item is completely out of stock")
                 break
+        
+        # Check for positive stock indicators (FEW ITEMS LEFT, ADD button, etc.)
+        # Look for "FEW ITEMS LEFT", "LOW STOCK", "ADD TO CART", etc.
+        page_text = soup.get_text().upper()
+        stock_indicators = [
+            'FEW ITEMS LEFT',
+            'LOW STOCK',
+            'FEW LEFT',
+            'LIMITED STOCK',
+            'ADD TO CART',
+            'ADD TO BAG',
+            'ADD',
+        ]
+        
+        for indicator in stock_indicators:
+            if indicator in page_text:
+                in_stock_detected = True
+                if self.verbose:
+                    print(f"  ✅ Found stock indicator: '{indicator}' - item is in stock")
+                break
+        
+        # Also check for "ADD" button (indicates item can be purchased)
+        add_buttons = soup.find_all('button', string=re.compile(r'ADD', re.I))
+        if add_buttons:
+            # Check if button is not disabled
+            for btn in add_buttons:
+                if btn.get('disabled') is None and 'disabled' not in ' '.join(btn.get('class', [])).lower():
+                    in_stock_detected = True
+                    if self.verbose:
+                        print("  ✅ Found enabled 'ADD' button - item is in stock")
+                    break
         
         # Determine overall availability
         has_available_sizes = len(sizes) > 0
@@ -524,6 +557,12 @@ class ZaraStockChecker:
         if out_of_stock_detected:
             has_available_sizes = False
             sizes = []  # Clear any sizes found (they shouldn't be there if out of stock)
+        elif in_stock_detected:
+            # If we detected positive stock indicators, mark as in stock even if no sizes found
+            # (some items might not have size selectors or sizes might be in a different format)
+            has_available_sizes = True
+            if self.verbose:
+                print("  ✅ Stock indicators found - marking as in stock")
         
         # If price is still N/A, try to extract from JSON-LD data we stored earlier
         final_price = product_data.get('price', 'N/A')
