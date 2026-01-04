@@ -6,4 +6,5 @@ selenium>=4.15.0
 undetected-chromedriver>=3.5.0
 python-dotenv>=1.0.0
 flask>=3.0.0
+playwright>=1.40.0
 

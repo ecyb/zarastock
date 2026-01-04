@@ -28,19 +28,333 @@ import atexit
 # Import the parsing logic from the main checker
 from zara_stock_checker import ZaraStockChecker
 
+# Try to import Playwright for Browserless support
+try:
+    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+
+
+class BrowserlessFetcher:
+    """Fetcher using Playwright + Browserless for cloud deployments."""
+    
+    def __init__(self, verbose: bool = False):
+        self.verbose = verbose
+        self.pw = None
+        self.browser = None
+
+    def _connect(self):
+        if self.browser:
+            return
+        
+        # Check for BROWSERLESS_URL first (may include token), then fall back to BROWSERLESS_TOKEN
+        ws = os.environ.get("BROWSERLESS_URL")
+        if not ws:
+            token = os.environ.get("BROWSERLESS_TOKEN")
+            if not token:
+                raise RuntimeError("Missing BROWSERLESS_TOKEN or BROWSERLESS_URL env var")
+            # Default to UK region for Zara UK, with stealth (proxy optional)
+            # Format: wss://production-lon.browserless.io?token=TOKEN&stealth=true
+            use_proxy = os.environ.get("BROWSERLESS_USE_PROXY", "false").lower() == "true"
+            if use_proxy:
+                ws = f"wss://production-lon.browserless.io?token={token}&stealth=true&proxy=residential&proxyCountry=gb"
+                if self.verbose:
+                    print(f"  Using default UK region with residential proxy")
+            else:
+                ws = f"wss://production-lon.browserless.io?token={token}&stealth=true"
+                if self.verbose:
+                    print(f"  Using default UK region (set BROWSERLESS_USE_PROXY=true for residential proxy)")
+        else:
+            # If URL is provided, check if it needs proxy/stealth params
+            # Only add if not already present
+            # Note: Residential proxy might not be available on all plans, so make it optional
+            use_proxy = os.environ.get("BROWSERLESS_USE_PROXY", "false").lower() == "true"
+            if use_proxy and "proxy" not in ws.lower():
+                separator = "&" if "?" in ws else "?"
+                ws = f"{ws}{separator}proxy=residential&proxyCountry=gb"
+                if self.verbose:
+                    print(f"  Added residential proxy to URL (set BROWSERLESS_USE_PROXY=true to enable)")
+            elif not use_proxy and self.verbose:
+                print(f"  Skipping residential proxy (set BROWSERLESS_USE_PROXY=true to enable)")
+            if "stealth" not in ws.lower():
+                separator = "&" if "?" in ws else "?"
+                ws = f"{ws}{separator}stealth=true"
+                if self.verbose:
+                    print(f"  Added stealth mode to URL")
+
+        self.pw = sync_playwright().start()
+        # Connect over CDP websocket with stealth mode and proxy enabled
+        self.browser = self.pw.chromium.connect_over_cdp(ws)
+
+        if self.verbose:
+            print("✅ Connected to Browserless")
+
+    def fetch_html(self, url: str, timeout_ms: int = 60000) -> Optional[str]:
+        self._connect()
+
+        # Use stealth mode and anti-detection features
+        # Browserless should handle this, but we'll add extra stealth measures
+        context = self.browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport={"width": 1920, "height": 1080},
+            locale="en-GB",
+            timezone_id="Europe/London",
+            # Disable automation indicators
+            java_script_enabled=True,
+            # Add more realistic headers
+            extra_http_headers={
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "Accept-Language": "en-GB,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "DNT": "1",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Cache-Control": "max-age=0",
+                "Referer": "https://www.google.com/",
+            },
+        )
+        page = context.new_page()
+
+        try:
+            # Add stealth scripts to hide automation
+            page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+                window.navigator.chrome = {
+                    runtime: {},
+                };
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5],
+                });
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-GB', 'en'],
+                });
+            """)
+
+            if self.verbose:
+                print(f"🌐 Browserless goto: {url}")
+
+            # Skip homepage visit for now - it might be causing the browser to close
+            # Navigate directly to product page
+            html = None
+            try:
+                if self.verbose:
+                    print(f"  Navigating to product page...")
+                # Use domcontentloaded first (more reliable)
+                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                
+                # CRITICAL: Capture HTML immediately after navigation, before any waits
+                # This ensures we have HTML even if the page closes during waits
+                try:
+                    html = page.content()
+                    if self.verbose and html:
+                        print(f"  ✅ Captured HTML immediately ({len(html)} chars)")
+                except Exception as e:
+                    if "closed" in str(e).lower():
+                        raise Exception("Page was closed immediately after navigation")
+                    raise
+                
+                # Now try to wait for JS to execute and network to be idle
+                # But if page closes, we already have HTML
+                try:
+                    page.wait_for_timeout(2000)
+                    # Then wait for network to be idle (but with shorter timeout)
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=20000)
+                    except:
+                        if self.verbose:
+                            print("  ⚠️  Networkidle timeout, continuing anyway...")
+                except Exception as wait_error:
+                    if "closed" in str(wait_error).lower():
+                        if self.verbose:
+                            print("  ⚠️  Page closed during wait, using captured HTML")
+                        if html and len(html) > 1000:
+                            return html
+                        raise Exception("Page closed during wait and we don't have valid HTML")
+                    raise
+                    
+                # Try to get updated HTML after waits (in case JS loaded more content)
+                if not page.is_closed():
+                    try:
+                        updated_html = page.content()
+                        if updated_html and len(updated_html) > len(html or ""):
+                            html = updated_html
+                            if self.verbose:
+                                print(f"  ✅ Got updated HTML ({len(html)} chars)")
+                    except:
+                        pass  # Use the HTML we already have
+                        
+            except Exception as nav_error:
+                error_msg = str(nav_error).lower()
+                if "closed" in error_msg or "target page" in error_msg:
+                    # If we have HTML, return it; otherwise raise
+                    if html and len(html) > 1000:
+                        if self.verbose:
+                            print(f"  ⚠️  Browser closed but we have HTML ({len(html)} chars)")
+                        return html
+                    raise Exception(f"Browser/context was closed during navigation. This might be due to: 1) Residential proxy not available on your plan, 2) Browserless connection issue, 3) Zara blocking the connection. Error: {nav_error}")
+                raise
+            
+            # Ensure we have HTML before continuing
+            if not html:
+                raise Exception("Failed to capture HTML content")
+
+            # Zara is JS-heavy; give it more time to render (but we already have HTML)
+            try:
+                page.wait_for_timeout(3000)  # Reduced wait time since we already have HTML
+                # Try to get updated HTML after wait (in case JS loaded more content)
+                if not page.is_closed():
+                    try:
+                        html = page.content()
+                    except:
+                        pass  # Use the HTML we already have
+            except Exception as e:
+                if "closed" in str(e).lower():
+                    # Page closed during wait, but we already have HTML
+                    if self.verbose:
+                        print("  ⚠️  Page closed during wait, using previously captured HTML")
+                    if html and len(html) > 1000:
+                        return html
+                    raise Exception("Page was closed and we don't have valid HTML content")
+            
+            if "Access Denied" in html or len(html) < 500:
+                if self.verbose:
+                    print("⚠️  Possible bot protection detected, trying stealth measures...")
+                # Wait longer and try scrolling to simulate human behavior
+                try:
+                    page.wait_for_timeout(3000)
+                    # Simulate mouse movement
+                    page.mouse.move(100, 100)
+                    page.wait_for_timeout(500)
+                    page.mouse.move(200, 200)
+                    page.wait_for_timeout(500)
+                    page.evaluate("window.scrollTo(0, 300)")
+                    page.wait_for_timeout(1000)
+                    page.evaluate("window.scrollTo(0, 600)")
+                    page.wait_for_timeout(1000)
+                    page.evaluate("window.scrollTo(0, 0)")
+                    page.wait_for_timeout(2000)
+                    # Try clicking somewhere to show interaction
+                    try:
+                        page.mouse.click(200, 200)
+                        page.wait_for_timeout(1000)
+                    except:
+                        pass
+                    html = page.content()
+                except Exception as e:
+                    if "closed" in str(e).lower():
+                        if self.verbose:
+                            print("  ⚠️  Page closed during stealth measures, using existing HTML")
+                        # Use the HTML we already have
+                        pass
+                    else:
+                        raise
+
+            # Try to wait for product page elements (non-fatal but important)
+            try:
+                if not page.is_closed():
+                    # Wait for any product-related element
+                    page.wait_for_selector("button, [data-qa-action], .product-detail, .size-selector, [class*='product'], [class*='Product'], h1", timeout=10000)
+                    if self.verbose:
+                        print("  ✅ Product page elements detected")
+            except Exception as e:
+                if "closed" in str(e).lower():
+                    if self.verbose:
+                        print("  ⚠️  Page closed while waiting for elements")
+                elif self.verbose:
+                    print("  ⚠️  Product page elements not found, continuing anyway...")
+
+            # Get final HTML (check if page is still open)
+            try:
+                if page.is_closed():
+                    # Page already closed, use HTML we captured earlier
+                    if 'html' in locals() and html and len(html) > 1000:
+                        if self.verbose:
+                            print(f"✅ Got HTML ({len(html)} chars) [from earlier capture]")
+                        return html
+                    raise Exception("Page was closed and we don't have valid HTML content")
+                html = page.content()
+            except Exception as e:
+                if "closed" in str(e).lower():
+                    # Try to use HTML we already have
+                    if 'html' in locals() and html and len(html) > 1000:
+                        if self.verbose:
+                            print(f"  ⚠️  Page closed, using previously captured HTML ({len(html)} chars)")
+                        return html
+                    raise Exception("Page was closed and we don't have HTML content")
+                raise
+            
+            if self.verbose:
+                print(f"✅ Got HTML ({len(html)} chars)")
+                if "Access Denied" in html or len(html) < 1000:
+                    print("⚠️  WARNING: Still getting 'Access Denied' or very short HTML")
+                    print("   This likely means Zara is blocking Browserless IP addresses")
+                    print("   Consider: 1) Using a different Browserless region/endpoint")
+                    print("             2) Using Browserless with residential proxy (set BROWSERLESS_USE_PROXY=true)")
+                    print("             3) Contacting Browserless support about IP blocking")
+                    print(f"\n📄 ACTUAL HTML CONTENT ({len(html)} chars):")
+                    print("=" * 80)
+                    print(html)
+                    print("=" * 80)
+            return html
+
+        except PWTimeoutError as e:
+            if self.verbose:
+                print(f"⚠️ Timeout: {e}")
+            return page.content()
+
+        finally:
+            try:
+                page.close()
+                context.close()
+            except:
+                pass
+
+    def close(self):
+        try:
+            if self.browser:
+                self.browser.close()
+        except:
+            pass
+        try:
+            if self.pw:
+                self.pw.stop()
+        except:
+            pass
+        self.browser = None
+        self.pw = None
+
 
 class ZaraStockCheckerBrowser(ZaraStockChecker):
     """Zara stock checker using undetected-chromedriver to bypass bot protection."""
     
     def __init__(self, config_file: str = "config.json", verbose: bool = False, headless: bool = True):
-        """Initialize with undetected Chrome webdriver."""
-        if not UC_AVAILABLE:
-            raise ImportError("undetected-chromedriver is required. Install with: pip install undetected-chromedriver")
-        
+        """Initialize with undetected Chrome webdriver or Browserless."""
         super().__init__(config_file, verbose)
         self.headless = headless
         self.driver = None
-        self._setup_driver()
+        self.browserless = None
+        
+        # Use Browserless if configured (for cloud deployments)
+        # Check for either BROWSERLESS_URL or BROWSERLESS_TOKEN
+        if os.environ.get("BROWSERLESS_URL") or os.environ.get("BROWSERLESS_TOKEN"):
+            if not PLAYWRIGHT_AVAILABLE:
+                raise ImportError("BROWSERLESS_URL/BROWSERLESS_TOKEN set but Playwright not installed. Install with: pip install playwright && playwright install chromium")
+            self.browserless = BrowserlessFetcher(verbose=self.verbose)
+            if self.verbose:
+                print("✅ Using Browserless (cloud browser) - Selenium not used")
+        else:
+            # Only setup local Selenium if Browserless is not configured
+            if not UC_AVAILABLE:
+                raise ImportError("undetected-chromedriver is required. Install with: pip install undetected-chromedriver")
+            self._setup_driver()
+        
         # Register cleanup on exit (more reliable than __del__)
         atexit.register(self.cleanup)
     
@@ -289,6 +603,15 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
     
     def fetch_product_page(self, url: str, retry: bool = True) -> Optional[str]:
         """Fetch the HTML content using browser automation."""
+        # Prefer Browserless if configured (for cloud deployments)
+        if self.browserless:
+            try:
+                return self.browserless.fetch_html(url)
+            except Exception as e:
+                print(f"❌ Browserless error: {e}")
+                return None
+        
+        # Otherwise, use local Selenium/undetected-chromedriver
         try:
             print(f"🌐 Loading page with browser...")
             self._safe(lambda d: d.set_page_load_timeout(60))
@@ -425,6 +748,14 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
     
     def cleanup(self):
         """Cleanup: close browser (called by atexit, more reliable than __del__)."""
+        # Close Browserless connection if used
+        if hasattr(self, 'browserless') and self.browserless:
+            try:
+                self.browserless.close()
+            except:
+                pass
+        
+        # Close local Selenium driver if used
         if hasattr(self, 'driver') and self.driver:
             try:
                 self.driver.quit()
