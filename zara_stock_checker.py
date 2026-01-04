@@ -527,41 +527,66 @@ class ZaraStockChecker:
         # Check for "FEW ITEMS LEFT" or similar low stock indicators (means item IS in stock)
         few_items_left = False
         html_lower = html.lower()
-        if 'few items left' in html_lower or 'few items' in html_lower:
+        
+        # Check for various stock indicators (case-insensitive)
+        stock_indicators = [
+            r'few\s+items\s+left',
+            r'few\s+items',
+            r'only\s+\d+\s+left',
+            r'low\s+stock',
+            r'in\s+stock',
+            r'add\s+to\s+bag',  # If there's an "add to bag" button, item is likely in stock
+            r'add\s+to\s+cart',
+        ]
+        
+        for pattern in stock_indicators:
+            if re.search(pattern, html_lower):
+                few_items_left = True
+                if self.verbose:
+                    print(f"  ✅ Found stock indicator pattern: {pattern}")
+                break
+        
+        # Also check the page text directly (not just HTML)
+        page_text = soup.get_text().lower()
+        if 'few items left' in page_text or 'few items' in page_text:
             few_items_left = True
             if self.verbose:
-                print("  ⚠️  Found 'FEW ITEMS LEFT' indicator - item is in stock but limited")
+                print("  ✅ Found 'FEW ITEMS LEFT' in page text")
         
-        # Also check for size availability indicators in the HTML
-        # Look for sizes with "Few items left" text next to them
-        if not few_items_left:
-            # Check for text patterns that indicate stock
-            stock_indicators = [
-                r'few\s+items\s+left',
-                r'only\s+\d+\s+left',
-                r'low\s+stock',
-                r'in\s+stock',
-            ]
-            for pattern in stock_indicators:
-                if re.search(pattern, html_lower):
+        # Check for "ADD" button (if there's an add button, item is likely in stock)
+        # Look for buttons with "ADD", "BUY", etc. text (check both direct text and child elements)
+        all_buttons = soup.find_all('button')
+        for btn in all_buttons:
+            btn_text = btn.get_text(strip=True).upper()
+            # Check if button text contains ADD, BUY, or similar
+            if re.search(r'ADD|BUY|PURCHASE|ADD TO', btn_text):
+                # Check if button is not disabled
+                if btn.get('disabled') is None and 'disabled' not in str(btn.get('class', [])).lower():
                     few_items_left = True
                     if self.verbose:
-                        print(f"  ⚠️  Found stock indicator pattern: {pattern}")
+                        print(f"  ✅ Found enabled '{btn.get_text(strip=True)}' button - item is likely in stock")
                     break
         
         # Determine overall availability
         has_available_sizes = len(sizes) > 0
         
+        if self.verbose:
+            print(f"  📊 Stock detection summary: sizes_found={len(sizes)}, few_items_left={few_items_left}, out_of_stock={out_of_stock_detected}")
+        
         # If explicitly marked as out of stock, override (item is completely out of stock)
         if out_of_stock_detected:
             has_available_sizes = False
             sizes = []  # Clear any sizes found (they shouldn't be there if out of stock)
-        elif few_items_left and not has_available_sizes:
-            # If we see "FEW ITEMS LEFT" but couldn't parse sizes, assume it's in stock
+            if self.verbose:
+                print("  ❌ Item marked as OUT OF STOCK - overriding availability")
+        elif few_items_left:
+            # If we see "FEW ITEMS LEFT" or other stock indicators, mark as in stock
             # This handles cases where the HTML structure changed but stock indicator is visible
             has_available_sizes = True
             if self.verbose:
-                print("  ✅ Item has 'FEW ITEMS LEFT' but sizes couldn't be parsed - marking as in stock")
+                print(f"  ✅ Item has stock indicators (few_items_left={few_items_left}) - marking as in stock")
+                if len(sizes) == 0:
+                    print("  ⚠️  Note: Sizes couldn't be parsed, but item appears to be in stock based on indicators")
         
         # If price is still N/A, try to extract from JSON-LD data we stored earlier
         final_price = product_data.get('price', 'N/A')
