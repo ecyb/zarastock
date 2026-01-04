@@ -75,9 +75,30 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 chrome_options.add_argument('--disable-software-rasterizer')
                 chrome_options.add_argument('--disable-gpu-compositing')
                 chrome_options.add_argument('--disable-accelerated-2d-canvas')
-                # Additional stability flags for containers
+                # Additional aggressive flags to prevent crashes
                 chrome_options.add_argument('--disable-features=VizDisplayCompositor')
                 chrome_options.add_argument('--disable-ipc-flooding-protection')
+                chrome_options.add_argument('--disable-background-networking')
+                chrome_options.add_argument('--disable-background-timer-throttling')
+                chrome_options.add_argument('--disable-renderer-backgrounding')
+                chrome_options.add_argument('--disable-backgrounding-occluded-windows')
+                chrome_options.add_argument('--disable-breakpad')
+                chrome_options.add_argument('--disable-client-side-phishing-detection')
+                chrome_options.add_argument('--disable-component-update')
+                chrome_options.add_argument('--disable-default-apps')
+                chrome_options.add_argument('--disable-extensions')
+                chrome_options.add_argument('--disable-hang-monitor')
+                chrome_options.add_argument('--disable-popup-blocking')
+                chrome_options.add_argument('--disable-prompt-on-repost')
+                chrome_options.add_argument('--disable-sync')
+                chrome_options.add_argument('--disable-translate')
+                chrome_options.add_argument('--disable-web-resources')
+                chrome_options.add_argument('--metrics-recording-only')
+                chrome_options.add_argument('--no-first-run')
+                chrome_options.add_argument('--safebrowsing-disable-auto-update')
+                chrome_options.add_argument('--enable-automation')
+                chrome_options.add_argument('--password-store=basic')
+                chrome_options.add_argument('--use-mock-keychain')
                 # Cap V8 memory to prevent OOM on heavy JS pages like Zara
                 chrome_options.add_argument('--js-flags=--max-old-space-size=128')
                 # Chrome logging for debugging crashes
@@ -271,12 +292,41 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
         try:
             print(f"🌐 Loading page with browser...")
             self._safe(lambda d: d.set_page_load_timeout(60))
-            self._safe(lambda d, u: d.get(u), url)
-            time.sleep(2)
-            page_source = self._safe(lambda d: d.page_source)
+            
+            # Try to load the page
+            try:
+                self._safe(lambda d, u: d.get(u), url)
+                print("  ✅ Page load initiated")
+            except Exception as load_error:
+                if self._is_dead_driver_error(load_error):
+                    print(f"  ❌ Driver died during page load: {load_error}")
+                    if retry:
+                        print("  ⚠️  Retrying with fresh driver...")
+                        self._ensure_driver_valid(skip_check=True)
+                        return self.fetch_product_page(url, retry=False)
+                    raise
+                raise
+            
+            # Wait for page to render (longer wait for heavy JS pages)
+            print("  ⏳ Waiting for page to render...")
+            time.sleep(5)  # Increased from 2s to 5s for heavy JS pages
+            
+            # Get page source
+            try:
+                page_source = self._safe(lambda d: d.page_source)
+                print(f"  ✅ Got page source ({len(page_source) if page_source else 0} chars)")
+            except Exception as source_error:
+                if self._is_dead_driver_error(source_error):
+                    print(f"  ❌ Driver died while getting page source: {source_error}")
+                    if retry:
+                        print("  ⚠️  Retrying with fresh driver...")
+                        self._ensure_driver_valid(skip_check=True)
+                        return self.fetch_product_page(url, retry=False)
+                    raise
+                raise
 
             if not page_source or len(page_source) < 100:
-                raise Exception("Page source is empty or too short")
+                raise Exception(f"Page source is empty or too short ({len(page_source) if page_source else 0} chars)")
 
             print(f"✅ Got page source ({len(page_source)} chars)")
             return page_source
