@@ -133,11 +133,10 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 
                 if os.path.exists(chromedriver_path):
                     service = Service(chromedriver_path)
-                    service.log_output = "/tmp/chromedriver.log"
+                    # Don't set log_output - ChromeDriver will log to stderr (which we already capture)
                     self.driver = webdriver.Chrome(service=service, options=chrome_options)
                     if self.verbose:
                         print(f"  Using ChromeDriver: {chromedriver_path}")
-                        print("  Chromedriver log: /tmp/chromedriver.log")
                 else:
                     # Let Selenium auto-detect (will use system chromedriver)
                     if self.verbose:
@@ -283,18 +282,6 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 return self.fetch_product_page(url, retry=False)
 
             print(f"❌ Error fetching {url} with browser: {e}")
-            
-            # Print chromedriver log if it exists (so we can see it in Railway logs)
-            if os.path.exists("/tmp/chromedriver.log"):
-                try:
-                    with open("/tmp/chromedriver.log", "r") as f:
-                        tail = f.readlines()[-80:]
-                    print("---- chromedriver.log (tail) ----")
-                    print("".join(tail))
-                    print("---- end chromedriver.log ----")
-                except:
-                    pass
-            
             return None
     
     def check_stock(self, url: str) -> Dict:
