@@ -1,6 +1,6 @@
 [phases.setup]
 nixPkgs = ['python312', 'python312Packages.pip', 'chromium', 'chromedriver']
-cmds = ['ln -sf $(which python3) /usr/local/bin/python']
+cmds = ['mkdir -p /usr/local/bin && ln -sf $(which python3) /usr/local/bin/python || true']
 
 [phases.install]
 cmds = ['python3 -m pip install --upgrade pip', 'python3 -m pip install -r requirements.txt']
