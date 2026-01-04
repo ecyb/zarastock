@@ -71,9 +71,15 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 # Use unique user-data-dir per process to avoid profile locks
                 chrome_options.add_argument(f'--user-data-dir=/tmp/chrome-data-{os.getpid()}')
                 chrome_options.add_argument(f'--disk-cache-dir=/tmp/chrome-cache-{os.getpid()}')
+                # CRITICAL: Disable renderer to prevent crashes in containers
+                chrome_options.add_argument('--disable-software-rasterizer')
+                chrome_options.add_argument('--disable-gpu-compositing')
+                chrome_options.add_argument('--disable-accelerated-2d-canvas')
                 # Additional stability flags for containers
                 chrome_options.add_argument('--disable-features=VizDisplayCompositor')
                 chrome_options.add_argument('--disable-ipc-flooding-protection')
+                # Cap V8 memory to prevent OOM on heavy JS pages like Zara
+                chrome_options.add_argument('--js-flags=--max-old-space-size=128')
                 # Chrome logging for debugging crashes
                 chrome_options.add_argument('--enable-logging=stderr')
                 chrome_options.add_argument('--v=1')
