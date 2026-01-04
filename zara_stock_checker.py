@@ -272,8 +272,8 @@ class ZaraStockChecker:
                     # Also check if item text contains "out of stock" or "unavailable"
                     is_unavailable_text = 'out of stock' in item_text or 'unavailable' in item_text or 'sold out' in item_text
                     
-                    if self.verbose:
-                        print(f"    Checking item: enabled={is_enabled}, in_stock={is_in_stock}, disabled={is_disabled}, few_items={has_few_items}, unavailable_text={is_unavailable_text}")
+                    # Reduced verbose logging to avoid Railway rate limits
+                    # Only log when actually finding a size
                     
                     # Consider available if: enabled OR in_stock OR has "few items" text, AND not disabled AND not unavailable
                     if (is_enabled or is_in_stock or has_few_items) and not is_disabled and not is_unavailable_text:
@@ -350,8 +350,9 @@ class ZaraStockChecker:
                         if not size_text or len(size_text) > 15:
                             continue
                         
-                        # Check if it's a valid size (common patterns - expanded)
-                        size_pattern = r'^(XS|S|M|L|XL|XXL|XXXL|\d+|\d+\.\d+|UK\s*\d+|EU\s*\d+|US\s*\d+)$'
+                        # Check if it's a valid size - ONLY letter sizes to avoid matching prices/codes
+                        # Exclude numbers and decimals (they're prices/product codes, not sizes)
+                        size_pattern = r'^(XS|S|M|L|XL|XXL|XXXL)$'
                         if re.match(size_pattern, size_text, re.I):
                             # Check availability
                             classes = item.get('class', [])
@@ -379,8 +380,8 @@ class ZaraStockChecker:
                             if 'out of stock' in aria_label or 'out of stock' in title:
                                 is_unavailable = True
                             
-                            if self.verbose:
-                                print(f"    Size: {size_text}, Disabled: {is_disabled}, Unavailable: {is_unavailable}")
+                            # Reduce verbose logging to avoid Railway rate limits
+                            # Only log if it's actually being added (not just checked)
                             
                             if not is_disabled and not is_unavailable:
                                 # Avoid duplicates
