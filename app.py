@@ -58,11 +58,20 @@ def check_stock():
         checker_instance = get_checker()
         
         # Check if a URL was passed as query parameter or in POST data
-        url_param = request.args.get('url') or request.form.get('url') or request.json.get('url') if request.is_json else None
+        url_param = request.args.get('url') or request.form.get('url') or (request.json.get('url') if request.is_json else None)
+        
+        # Debug: log what URL we received
+        if url_param:
+            print(f"🔍 URL parameter received: {url_param}")
+            # Decode URL if needed (Flask should auto-decode, but just in case)
+            from urllib.parse import unquote
+            url_param = unquote(url_param) if url_param else None
+            print(f"🔍 URL parameter after decode: {url_param}")
         
         # If URL is provided, use only that URL and ignore config
         if url_param:
             products = [url_param]
+            print(f"✅ Using provided URL (ignoring config): {url_param}")
         else:
             # Get products from config
             products = checker_instance.config.get('products', [])
@@ -81,6 +90,7 @@ def check_stock():
         
         for product_url in products:
             try:
+                print(f"🔍 Checking product URL: {product_url}")
                 stock_info = checker_instance.check_stock(product_url)
                 
                 # Check if parsing failed (null values indicate failure)
@@ -112,6 +122,7 @@ def check_stock():
                 
                 results.append({
                     'url': stock_info.get('url'),
+                    'requested_url': product_url,  # Show what URL was actually requested
                     'name': stock_info.get('name'),
                     'price': stock_info.get('price'),
                     'in_stock': stock_info.get('in_stock', False),
