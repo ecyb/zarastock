@@ -6,5 +6,5 @@ nixPkgs = ['python312', 'python312Packages.pip', 'python312Packages.setuptools',
 cmds = ['mkdir -p /usr/local/bin && ln -sf $(which python3) /usr/local/bin/python && ln -sf $(which pip3) /usr/local/bin/pip || true']
 
 [phases.install]
-cmds = ['pip3 install --upgrade pip setuptools wheel', 'pip3 install -r requirements.txt']
+cmds = ['python3 -m venv /opt/venv', '. /opt/venv/bin/activate && pip install --upgrade pip setuptools wheel', '. /opt/venv/bin/activate && pip install -r requirements.txt']
 
