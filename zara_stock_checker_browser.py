@@ -61,8 +61,19 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                 chrome_options.add_argument('--no-sandbox')
                 chrome_options.add_argument('--disable-dev-shm-usage')
                 chrome_options.add_argument('--disable-gpu')
+                chrome_options.add_argument('--disable-software-rasterizer')
+                chrome_options.add_argument('--disable-extensions')
+                chrome_options.add_argument('--disable-background-networking')
+                chrome_options.add_argument('--disable-background-timer-throttling')
+                chrome_options.add_argument('--disable-renderer-backgrounding')
+                chrome_options.add_argument('--disable-backgrounding-occluded-windows')
+                chrome_options.add_argument('--disable-ipc-flooding-protection')
                 chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+                chrome_options.add_argument('--disable-features=TranslateUI,BlinkGenPropertyTrees')
                 chrome_options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+                # Disable DevTools to prevent connection issues
+                chrome_options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
+                chrome_options.add_experimental_option('useAutomationExtension', False)
                 
                 # Find Chromium binary (check Nix store paths for Railway)
                 chrome_binaries = [
@@ -396,6 +407,24 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
                     self.driver.get(url)
                     time.sleep(2)  # Wait for page to load
                     page_source = self.driver.page_source
+                elif 'devtools' in error_msg or 'disconnected' in error_msg or 'not connected' in error_msg:
+                    # DevTools connection issue - try to get page source via execute_script
+                    print("⚠️  DevTools connection issue, trying alternative method to get page source...")
+                    try:
+                        page_source = self.driver.execute_script("return document.documentElement.outerHTML;")
+                        print("✅ Successfully got page source via execute_script")
+                    except Exception as script_error:
+                        # Last resort: recreate driver and retry
+                        print(f"⚠️  Alternative method failed ({script_error}), recreating driver...")
+                        self._ensure_driver_valid()
+                        self.driver.set_page_load_timeout(60)
+                        self.driver.get(url)
+                        time.sleep(3)  # Wait longer for page to load
+                        try:
+                            page_source = self.driver.page_source
+                        except:
+                            # Final fallback
+                            page_source = self.driver.execute_script("return document.documentElement.outerHTML;")
                 else:
                     raise
             step_end = time.time()
