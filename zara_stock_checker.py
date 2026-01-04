@@ -395,36 +395,22 @@ class ZaraStockChecker:
             if self.verbose:
                 print("  No sizes found with selectors, trying aggressive search...")
             # Look for all buttons/clickable elements
-            all_buttons = soup.find_all(['button', 'a', 'div', 'li', 'span'], 
+            all_buttons = soup.find_all(['button', 'a', 'div'], 
                                       class_=re.compile(r'product|size|selector|option', re.I))
             for btn in all_buttons:
                 text = btn.get_text(strip=True)
-                # Extract size from text (might have "Few items left" or other text)
-                size_match = re.search(r'\b(XS|S|M|L|XL|XXL|XXXL|\d{1,2}(?:\.\d+)?)\b', text, re.I)
-                if size_match:
-                    size_text = size_match.group(1).upper()
+                # Only match letter sizes (XS, S, M, L, XL, XXL) - exclude numbers to avoid matching prices/codes
+                if text and re.match(r'^(XS|S|M|L|XL|XXL|XXXL)$', text, re.I):
                     classes = btn.get('class', [])
                     class_str = ' '.join(classes).lower() if classes else ''
                     is_disabled = btn.get('disabled') is not None or 'disabled' in class_str
-                    is_unavailable = 'unavailable' in class_str or 'out' in class_str or 'sold-out' in class_str or 'view similar' in text.lower()
+                    is_unavailable = 'unavailable' in class_str or 'out' in class_str or 'sold-out' in class_str
                     
-                    # Check for "few items left" - if present, it's available
-                    has_few_items = 'few items' in text.lower() or 'few items left' in text.lower()
-                    
-                    # Check parent context for size-related keywords
-                    parent = btn.find_parent()
-                    parent_text = parent.get_text().lower() if parent else ''
-                    is_size_context = 'size' in parent_text or 'select' in parent_text
-                    
-                    if self.verbose:
-                        print(f"    Aggressive search - Size: {size_text}, Disabled: {is_disabled}, Unavailable: {is_unavailable}, Few items: {has_few_items}, Context: {is_size_context}")
-                    
-                    # Include if: not disabled, not unavailable, and (has few items OR is in size context OR parent has size class)
-                    if not is_disabled and not is_unavailable and (has_few_items or is_size_context or btn.find_parent(class_=re.compile(r'size', re.I))):
-                        if not any(s['size'].upper() == size_text for s in sizes):
-                            sizes.append({'size': size_text, 'available': True})
+                    if not is_disabled and not is_unavailable:
+                        if not any(s['size'] == text for s in sizes):
+                            sizes.append({'size': text, 'available': True})
                             if self.verbose:
-                                print(f"    ✅ Found size via aggressive search: {size_text}")
+                                print(f"    Found size via aggressive search: {text}")
         
         # Method 4: Look for data attributes
         size_buttons = soup.find_all(attrs={'data-size': True})
@@ -445,43 +431,6 @@ class ZaraStockChecker:
                         'size': size_name,
                         'available': True
                     })
-        
-        # Method 5: Extract sizes from text patterns like "M Few items left" or "S\nFew items left"
-        if len(sizes) == 0:
-            if self.verbose:
-                print("  Trying text pattern extraction for sizes with 'few items left'...")
-            # Look for patterns like: "M", "Few items left" or "S\nFew items left"
-            # Search in all text nodes and their parent elements
-            for element in soup.find_all(['li', 'div', 'button', 'span']):
-                text = element.get_text()
-                # Pattern: size letter/number followed by "Few items left" or just the size
-                # Match: XS, S, M, L, XL, XXL or numbers, optionally followed by "Few items left"
-                pattern = re.compile(r'\b(XS|S|M|L|XL|XXL|XXXL|\d{1,2}(?:\.\d+)?)\s*(?:Few\s+items\s+left|few\s+items\s+left)?', re.I)
-                matches = pattern.findall(text)
-                for match in matches:
-                    size_text = match.upper() if isinstance(match, str) else str(match).upper()
-                    
-                    # Check if element or parent indicates it's unavailable
-                    classes = element.get('class', [])
-                    class_str = ' '.join(classes).lower() if classes else ''
-                    is_disabled = element.get('disabled') is not None or 'disabled' in class_str
-                    is_unavailable = 'unavailable' in class_str or 'out-of-stock' in class_str or 'sold-out' in class_str or 'view similar' in text.lower()
-                    
-                    # If text contains "few items left", it's definitely available
-                    has_few_items = 'few items' in text.lower() or 'few items left' in text.lower()
-                    
-                    if self.verbose:
-                        print(f"    Pattern match - Size: {size_text}, Disabled: {is_disabled}, Unavailable: {is_unavailable}, Few items: {has_few_items}")
-                    
-                    # Include if: not disabled, not unavailable, and (has few items OR no "out of stock" text)
-                    if not is_disabled and not is_unavailable:
-                        if not any(s['size'].upper() == size_text for s in sizes):
-                            sizes.append({
-                                'size': size_text,
-                                'available': True
-                            })
-                            if self.verbose:
-                                print(f"    ✅ Found size via text pattern: {size_text}")
         
         # Get product name
         product_name = (
