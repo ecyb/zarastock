@@ -1,7 +1,10 @@
+[variables]
+PYTHON_VERSION = "3.12"
+
 [phases.setup]
-nixPkgs = ['python312', 'python312Packages.pip', 'chromium', 'chromedriver']
-cmds = ['mkdir -p /usr/local/bin && ln -sf $(which python3) /usr/local/bin/python || true']
+nixPkgs = ['python312', 'python312Packages.pip', 'python312Packages.setuptools', 'chromium', 'chromedriver']
+cmds = ['mkdir -p /usr/local/bin && ln -sf $(which python3) /usr/local/bin/python && ln -sf $(which pip3) /usr/local/bin/pip || true']
 
 [phases.install]
-cmds = ['python3 -m pip install --upgrade pip', 'python3 -m pip install -r requirements.txt']
+cmds = ['python3 -m pip install --upgrade pip setuptools wheel', 'python3 -m pip install -r requirements.txt']
 
