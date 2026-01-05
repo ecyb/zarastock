@@ -364,12 +364,23 @@ class ZaraStockChecker:
                 # Map SKU to size name
                 size_name = size_mapping.get(sku_id, f"SKU {sku_id}")
                 
-                # Check availability
-                is_available = availability in ['in_stock', 'low_on_stock']
+                # Check availability - explicitly check for out_of_stock
+                # Only consider in_stock or low_on_stock as available
+                is_available = False
+                if availability == 'in_stock' or availability == 'low_on_stock':
+                    is_available = True
+                elif availability == 'out_of_stock':
+                    is_available = False
+                else:
+                    # Unknown status - log it but don't consider available
+                    if self.verbose:
+                        print(f"     ⚠️  Unknown availability status: '{availability}' for SKU {sku_id}")
+                    is_available = False
+                
                 status_emoji = "✅" if is_available else "❌"
                 status_text = "IN STOCK" if is_available else "OUT OF STOCK"
                 
-                print(f"     {status_emoji} {size_name} (SKU {sku_id}): {status_text} ({availability})")
+                print(f"     {status_emoji} {size_name} (SKU {sku_id}): {status_text} (availability: '{availability}')")
                 
                 if is_available:
                     in_stock = True
