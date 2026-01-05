@@ -663,11 +663,124 @@ class ZaraStockChecker:
         self.send_telegram_notification(product_info)
 
 
+# Flask API server for /check endpoint
+def create_flask_app():
+    """Create Flask app for /check endpoint."""
+    try:
+        from flask import Flask, jsonify, request
+        app = Flask(__name__)
+        checker_instance = None
+        
+        def get_checker():
+            global checker_instance
+            if checker_instance is None:
+                checker_instance = ZaraStockChecker(verbose=True)
+            return checker_instance
+        
+        @app.route('/check', methods=['GET', 'POST'])
+        def check_stock():
+            """Check stock endpoint - same as run_and_notify but via HTTP."""
+            try:
+                checker = get_checker()
+                
+                url_param = request.args.get('url') or request.form.get('url') or (request.json.get('url') if request.is_json else None)
+                
+                if url_param:
+                    products = [url_param]
+                else:
+                    products = checker.config.get('products', [])
+                    if not products:
+                        return jsonify({
+                            'error': 'No products configured and no URL provided',
+                            'status': 'error',
+                            'hint': 'Provide a URL via ?url=<product_url> or configure products in config.json/ZARA_PRODUCTS'
+                        }), 400
+                
+                results = []
+                notifications_sent = []
+                
+                for product_url in products:
+                    try:
+                        stock_info = checker.check_stock(product_url)
+                        
+                        current_in_stock = stock_info.get('in_stock', False)
+                        skip_nostock = checker.config.get('skip_nostock_notification', False)
+                        
+                        if current_in_stock or (not current_in_stock and not skip_nostock):
+                            try:
+                                checker.send_notification(stock_info)
+                                notifications_sent.append(product_url)
+                            except Exception as notify_error:
+                                print(f"⚠️  Failed to send notification for {product_url}: {notify_error}")
+                        
+                        results.append({
+                            'url': stock_info.get('url'),
+                            'requested_url': product_url,
+                            'name': stock_info.get('name'),
+                            'price': stock_info.get('price'),
+                            'in_stock': stock_info.get('in_stock', False),
+                            'available_sizes': stock_info.get('available_sizes', []),
+                            'timestamp': stock_info.get('timestamp'),
+                            'notification_sent': product_url in notifications_sent,
+                            'error': stock_info.get('error'),
+                        })
+                    except Exception as e:
+                        import traceback
+                        error_trace = traceback.format_exc()
+                        print(f"❌ Error checking {product_url}: {e}")
+                        results.append({
+                            'url': product_url,
+                            'error': str(e),
+                            'status': 'error',
+                        })
+                
+                return jsonify({
+                    'status': 'success',
+                    'results': results,
+                    'count': len(results),
+                    'notifications_sent': len(notifications_sent),
+                    'checker_type': 'api'
+                })
+            
+            except Exception as e:
+                return jsonify({
+                    'error': str(e),
+                    'status': 'error'
+                }), 500
+        
+        @app.route('/health', methods=['GET'])
+        def health():
+            """Health check endpoint."""
+            return jsonify({'status': 'ok', 'service': 'zara-stock-checker'})
+        
+        return app
+    except ImportError:
+        return None
+
+
 # Main execution
-print("=" * 60)
-print("🚀 Running Stock Check & Sending Telegram Notification")
-print("=" * 60)
-print()
+if __name__ == "__main__":
+    # Check if we should run as Flask server (for Railway web service)
+    import os
+    import sys
+    
+    # If PORT environment variable is set, run as Flask server
+    if os.getenv('PORT'):
+        app = create_flask_app()
+        if app:
+            port = int(os.getenv('PORT', 5000))
+            print(f"🌐 Starting Flask server on port {port}")
+            print(f"   Endpoints: /check, /health")
+            app.run(host='0.0.0.0', port=port)
+        else:
+            print("❌ Flask not available, falling back to direct execution")
+            sys.exit(1)
+    else:
+        # Run as standalone script (for cron jobs)
+        print("=" * 60)
+        print("🚀 Running Stock Check & Sending Telegram Notification")
+        print("=" * 60)
+        print()
 
 try:
     checker = ZaraStockChecker(verbose=True)
