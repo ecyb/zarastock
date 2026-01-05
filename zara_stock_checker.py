@@ -301,15 +301,33 @@ class ZaraStockChecker:
         
         print(f"  📡 Calling API: {api_url}")
         print(f"  📋 Request Headers:")
+        
+        # Use consistent headers to get consistent SKU responses
+        # Force UK region - try to match what user sees in manual checks
+        # The API might return different SKUs based on IP geolocation or headers
         api_headers = {
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/json',
-            'Accept-Language': 'en-GB,en;q=0.9',
-            'Referer': url,
+            'Accept-Language': 'en-GB,en;q=0.9',  # UK English - might affect SKU selection
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Referer': 'https://www.zara.com/uk/en/',  # UK site - important for region
             'Origin': 'https://www.zara.com',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'X-Requested-With': 'XMLHttpRequest',  # Indicate AJAX request
         }
+        
+        # Log all headers for debugging
         for key, value in api_headers.items():
             print(f"     {key}: {value}")
+        print()
+        
+        # Log the exact URL being called
+        print(f"  🌍 API Request Details:")
+        print(f"     URL: {api_url}")
+        print(f"     Store ID: {store_id}")
+        print(f"     Product ID: {product_id}")
+        print(f"     Region: UK (en-GB)")
         print()
         
         try:
@@ -319,8 +337,13 @@ class ZaraStockChecker:
             print(f"  📥 Response Status: {response.status_code}")
             print(f"  📥 Response Headers:")
             for key, value in response.headers.items():
-                if key.lower() in ['content-type', 'content-length', 'date']:
+                if key.lower() in ['content-type', 'content-length', 'date', 'x-country-code', 'cf-ray', 'cf-ipcountry']:
                     print(f"     {key}: {value}")
+            
+            # Check if response indicates region/country
+            country_header = response.headers.get('cf-ipcountry') or response.headers.get('x-country-code')
+            if country_header:
+                print(f"  🌍 Detected Country/Region: {country_header}")
             print()
             
             if response.status_code != 200:
