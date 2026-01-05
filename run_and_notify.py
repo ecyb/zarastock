@@ -728,8 +728,8 @@ class ZaraStockChecker:
                 config['products'] = products
         
         # Override Telegram settings from environment variables
-        telegram_token = os.getenv('api_key') or os.getenv('TELEGRAM_BOT_TOKEN') or os.getenv('TELEGRAM_API_KEY')
-        telegram_chat_id = os.getenv('chat_id') or os.getenv('TELEGRAM_CHAT_ID')
+        telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
         
         if telegram_token:
             if 'telegram' not in config:
@@ -1063,7 +1063,7 @@ try:
     print()
     
     telegram_config = checker.config.get('telegram', {})
-    bot_token = telegram_config.get('bot_token', '') or os.getenv('TELEGRAM_BOT_TOKEN') or os.getenv('api_key')
+    bot_token = telegram_config.get('bot_token', '') or os.getenv('TELEGRAM_BOT_TOKEN')
     chat_ids = telegram_config.get('chat_ids', [])
     enabled = telegram_config.get('enabled', False)
     
