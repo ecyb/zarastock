@@ -339,7 +339,7 @@ class ZaraStockChecker:
                             print(f"     📍 IP Location: {city}, {region}, {country}")
                             print(f"     🏢 ISP: {ip_data.get('isp', 'Unknown')}")
                             if country != 'United Kingdom':
-                                print(f"     ⚠️  WARNING: Railway server is in {country}, NOT UK!")
+                                print(f"     ⚠️  WARNING: Server is in {country}, NOT UK!")
                                 print(f"     ⚠️  Zara API returns inventory for {country} region, not UK!")
                 except Exception as e:
                     if self.verbose:
@@ -362,7 +362,7 @@ class ZaraStockChecker:
                             print(f"     📍 Server Location (from own IP): {city}, {region}, {country}")
                             print(f"     🏢 ISP: {ip_data.get('isp', 'Unknown')}")
                             if country != 'United Kingdom':
-                                print(f"     ⚠️  WARNING: Railway server is in {country}, NOT UK!")
+                                print(f"     ⚠️  WARNING: Server is in {country}, NOT UK!")
                                 print(f"     ⚠️  Zara API returns inventory for {country} region, not UK!")
                 except Exception as e:
                     if self.verbose:
@@ -398,8 +398,8 @@ class ZaraStockChecker:
             expected_uk_skus = [483272260, 483272258, 483272259, 483272256, 483272257]
             if set(received_skus) != set(expected_uk_skus):
                 print(f"  ⚠️  WARNING: Received SKUs {received_skus} differ from expected UK SKUs {expected_uk_skus}")
-                print(f"  ⚠️  This means Railway server is checking a DIFFERENT REGION's inventory!")
-                print(f"  ⚠️  Railway IP location is NOT in UK - inventory shown is for server's region, not UK")
+                print(f"  ⚠️  This means the server is checking a DIFFERENT REGION's inventory!")
+                print(f"  ⚠️  Server IP location is NOT in UK - inventory shown is for server's region, not UK")
             print()
             
             # Get size mapping
@@ -936,7 +936,7 @@ def create_flask_app():
 
 # Main execution
 if __name__ == "__main__":
-    # Check if we should run as Flask server (for Railway web service)
+    # Check if we should run as Flask server (for web service)
     import os
     import sys
     
