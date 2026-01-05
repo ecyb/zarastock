@@ -1227,10 +1227,15 @@ class ZaraStockChecker:
                     # For now, use the API URL but user should provide product page URL
                     pass
             
-            if is_in_stock:
-                sizes_text = ', '.join(available_sizes) if available_sizes else 'Unknown'
-                method_emoji = '🚀' if method == 'api' else '🌐'
-                message = f"""✅ <b>Zara Item In Stock!</b> {method_emoji}
+            # Only send notification if item is IN STOCK (never send out-of-stock notifications)
+            if not is_in_stock:
+                if self.verbose:
+                    print(f"  ⏭️  Skipping notification - item is OUT OF STOCK (only notify when in stock)")
+                return
+            
+            sizes_text = ', '.join(available_sizes) if available_sizes else 'Unknown'
+            method_emoji = '🚀' if method == 'api' else '🌐'
+            message = f"""✅ <b>Zara Item In Stock!</b> {method_emoji}
 
 📦 <b>{product_name}</b>
 📏 Available Sizes: <b>{sizes_text}</b>
@@ -1238,16 +1243,6 @@ class ZaraStockChecker:
 🔗 <a href="{view_url}">View Product</a>
 
 ⏰ Check it out now before it sells out!"""
-            else:
-                method_emoji = '🚀' if method == 'api' else '🌐'
-                message = f"""❌ <b>Zara Item Out of Stock</b> {method_emoji}
-
-📦 <b>{product_name}</b>
-📏 Status: <b>OUT OF STOCK</b>
-
-🔗 <a href="{view_url}">View Product</a>
-
-⏰ Will notify you when it's back in stock!"""
             
             # Send to all registered users
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
