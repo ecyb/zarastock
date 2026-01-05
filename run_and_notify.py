@@ -853,13 +853,15 @@ class ZaraStockChecker:
                 message = f"""✅ <b>Zara Item In Stock!</b> {method_emoji}
 
 {product_name_line}📏 Available Sizes: <b>{sizes_text}</b>
-{product_link_line}⏰ Check it out now before it sells out!"""
+{product_link_line}
+⏰ Check it out now before it sells out!"""
             else:
                 method_emoji = '🚀' if method == 'api' else '🌐'
                 message = f"""❌ <b>Zara Item Out of Stock</b> {method_emoji}
 
 {product_name_line}📏 Status: <b>OUT OF STOCK</b>
-{product_link_line}⏰ Will notify you when it's back in stock!"""
+{product_link_line}
+⏰ Will notify you when it's back in stock!"""
             
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             success_count = 0
