@@ -215,14 +215,34 @@ class ZaraStockChecker:
         print(f"     Product ID: {product_id}")
         print(f"     Region: UK (en-GB)")
         
-        # Check for UK proxy configuration
+        # Check for UK proxy configuration - try free proxy if not set
         uk_proxy = os.getenv('UK_PROXY') or os.getenv('PROXY_URL')
+        detected_location = "Unknown"
+        
+        if not uk_proxy:
+            # Try to get a free UK proxy from proxy list
+            try:
+                import requests as req_lib
+                # Try free proxy API (example - you may need to replace with actual free proxy service)
+                # For now, we'll try to get UK proxy from a free proxy list
+                proxy_response = req_lib.get("https://api.proxyscrape.com/v2/?request=get&protocol=http&country=GB&timeout=10000&ssl=yes", timeout=5)
+                if proxy_response.status_code == 200 and proxy_response.text.strip():
+                    proxies_list = proxy_response.text.strip().split('\n')
+                    if proxies_list:
+                        uk_proxy = f"http://{proxies_list[0].strip()}"
+                        print(f"     🔄 Using FREE UK Proxy: {uk_proxy}")
+                        detected_location = "UK (via free proxy)"
+            except Exception as e:
+                if self.verbose:
+                    print(f"     ⚠️  Could not get free UK proxy: {e}")
+        
         if uk_proxy:
             print(f"     🔄 Using UK Proxy: {uk_proxy}")
             proxies = {
                 'http': uk_proxy,
                 'https': uk_proxy
             }
+            detected_location = "UK (via proxy)"
         else:
             proxies = None
             print(f"     ⚠️  No UK proxy configured - requests will come from Railway server location")
@@ -391,49 +411,80 @@ class ZaraStockChecker:
                 if self.verbose:
                     print(f"  📄 Fetching product name from: {product_page_url}")
                 try:
-                    # Use UK proxy if configured
+                    # Use UK proxy if configured (same as API request)
                     uk_proxy = os.getenv('UK_PROXY') or os.getenv('PROXY_URL')
                     proxies = {'http': uk_proxy, 'https': uk_proxy} if uk_proxy else None
-                    page_response = self.session.get(product_page_url, proxies=proxies, timeout=10)
-                    if page_response.status_code == 200:
-                        html = page_response.text
-                        soup = BeautifulSoup(html, 'html.parser')
-                        
-                        # Try JSON-LD first (most reliable)
-                        json_ld = soup.find('script', type='application/ld+json')
-                        if json_ld:
-                            try:
-                                data = json.loads(json_ld.string)
-                                if isinstance(data, dict):
-                                    product_name = data.get('name', 'Unknown Product')
-                                    price = data.get('offers', {}).get('price', '')
-                                    if price:
-                                        product_price = f"£{price}" if isinstance(price, (int, float)) else str(price)
-                                    if self.verbose and product_name:
-                                        print(f"  ✅ Found product name from JSON-LD: {product_name}")
-                            except Exception as e:
+                    
+                    # Try multiple times if it fails
+                    for attempt in range(2):
+                        try:
+                            page_response = self.session.get(product_page_url, proxies=proxies, timeout=15)
+                            if page_response.status_code == 200:
+                                html = page_response.text
+                                
+                                # Check if we got blocked
+                                if len(html) < 1000 or 'bot' in html.lower() or 'captcha' in html.lower():
+                                    if self.verbose:
+                                        print(f"  ⚠️  Page might be blocked (length: {len(html)})")
+                                    if attempt == 0:
+                                        continue  # Try once more
+                                
+                                soup = BeautifulSoup(html, 'html.parser')
+                                
+                                # Try JSON-LD first (most reliable)
+                                json_ld = soup.find('script', type='application/ld+json')
+                                if json_ld:
+                                    try:
+                                        data = json.loads(json_ld.string)
+                                        if isinstance(data, dict):
+                                            product_name = data.get('name', 'Unknown Product')
+                                            price = data.get('offers', {}).get('price', '')
+                                            if price:
+                                                product_price = f"£{price}" if isinstance(price, (int, float)) else str(price)
+                                            if self.verbose and product_name and product_name != 'Unknown Product':
+                                                print(f"  ✅ Found product name from JSON-LD: {product_name}")
+                                    except Exception as e:
+                                        if self.verbose:
+                                            print(f"  ⚠️  Failed to parse JSON-LD: {e}")
+                                
+                                # Fallback: try title tag
+                                if not product_name or product_name == 'Unknown Product':
+                                    title_tag = soup.find('title')
+                                    if title_tag:
+                                        title_text = title_tag.get_text(strip=True)
+                                        product_name = re.sub(r'\s*\|\s*ZARA.*$', '', title_text, flags=re.I).strip()
+                                        if self.verbose and product_name and product_name != 'Unknown Product':
+                                            print(f"  ✅ Found product name from title: {product_name}")
+                                
+                                # Fallback: try h1 tag
+                                if not product_name or product_name == 'Unknown Product':
+                                    h1_tag = soup.find('h1')
+                                    if h1_tag:
+                                        product_name = h1_tag.get_text(strip=True)
+                                        if self.verbose and product_name and product_name != 'Unknown Product':
+                                            print(f"  ✅ Found product name from h1: {product_name}")
+                                
+                                # Fallback: try meta property="og:title"
+                                if not product_name or product_name == 'Unknown Product':
+                                    og_title = soup.find('meta', property='og:title')
+                                    if og_title:
+                                        product_name = og_title.get('content', '').strip()
+                                        if self.verbose and product_name and product_name != 'Unknown Product':
+                                            print(f"  ✅ Found product name from og:title: {product_name}")
+                                
+                                break  # Success, exit retry loop
+                            else:
                                 if self.verbose:
-                                    print(f"  ⚠️  Failed to parse JSON-LD: {e}")
-                        
-                        # Fallback: try title tag
-                        if not product_name or product_name == 'Unknown Product':
-                            title_tag = soup.find('title')
-                            if title_tag:
-                                title_text = title_tag.get_text(strip=True)
-                                product_name = re.sub(r'\s*\|\s*ZARA.*$', '', title_text, flags=re.I).strip()
-                                if self.verbose and product_name:
-                                    print(f"  ✅ Found product name from title: {product_name}")
-                        
-                        # Fallback: try h1 tag
-                        if not product_name or product_name == 'Unknown Product':
-                            h1_tag = soup.find('h1')
-                            if h1_tag:
-                                product_name = h1_tag.get_text(strip=True)
-                                if self.verbose and product_name:
-                                    print(f"  ✅ Found product name from h1: {product_name}")
-                    else:
-                        if self.verbose:
-                            print(f"  ⚠️  Failed to fetch product page: HTTP {page_response.status_code}")
+                                    print(f"  ⚠️  Failed to fetch product page: HTTP {page_response.status_code}")
+                                if attempt == 0:
+                                    continue
+                        except Exception as e:
+                            if self.verbose:
+                                print(f"  ⚠️  Attempt {attempt + 1} failed: {e}")
+                            if attempt == 0:
+                                continue
+                            else:
+                                raise
                 except Exception as e:
                     if self.verbose:
                         print(f"  ⚠️  Could not fetch product name: {e}")
@@ -605,6 +656,11 @@ class ZaraStockChecker:
             
             view_url = product_info.get('product_page_url') or product_url
             
+            # Get location info for message
+            location = product_info.get('detected_location', 'Unknown')
+            country = product_info.get('detected_country', 'Unknown')
+            location_text = f"📍 Shop Location: {location}" if location != 'Unknown' else "📍 Location: Unknown"
+            
             if is_in_stock:
                 sizes_text = ', '.join(available_sizes) if available_sizes else 'Unknown'
                 method_emoji = '🚀' if method == 'api' else '🌐'
@@ -612,6 +668,7 @@ class ZaraStockChecker:
 
 📦 <b>{product_name}</b>
 📏 Available Sizes: <b>{sizes_text}</b>
+{location_text}
 
 🔗 <a href="{view_url}">View Product</a>
 
@@ -622,6 +679,7 @@ class ZaraStockChecker:
 
 📦 <b>{product_name}</b>
 📏 Status: <b>OUT OF STOCK</b>
+{location_text}
 
 🔗 <a href="{view_url}">View Product</a>
 
