@@ -1,2 +1,2 @@
-web: python3 app.py
+web: python3 run_and_notify.py
 
