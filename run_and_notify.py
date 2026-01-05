@@ -316,45 +316,7 @@ class ZaraStockChecker:
             print(f"     Overall Status: {'✅ IN STOCK' if in_stock else '❌ OUT OF STOCK'}")
             print()
             
-            # Get product name and price
-            product_name = None
-            product_price = None
-            
-            page_url = product_page_url if product_page_url else (url if '/itxrest/' not in url else None)
-            
-            if page_url:
-                try:
-                    page_response = self.session.get(page_url, timeout=10)
-                    if page_response.status_code == 200:
-                        html = page_response.text
-                        soup = BeautifulSoup(html, 'html.parser')
-                        
-                        json_ld = soup.find('script', type='application/ld+json')
-                        if json_ld:
-                            try:
-                                data = json.loads(json_ld.string)
-                                if isinstance(data, dict):
-                                    product_name = data.get('name', 'Unknown Product')
-                                    price = data.get('offers', {}).get('price', '')
-                                    if price:
-                                        product_price = f"£{price}" if isinstance(price, (int, float)) else str(price)
-                            except:
-                                pass
-                        
-                        if not product_name:
-                            title_tag = soup.find('title')
-                            if title_tag:
-                                title_text = title_tag.get_text(strip=True)
-                                product_name = re.sub(r'\s*\|\s*ZARA.*$', '', title_text, flags=re.I).strip()
-                        
-                        if not product_name:
-                            h1_tag = soup.find('h1')
-                            if h1_tag:
-                                product_name = h1_tag.get_text(strip=True)
-                except Exception as e:
-                    if self.verbose:
-                        print(f"  ⚠️  Could not fetch product name: {e}")
-            
+            # Ensure product_page_url is set before fetching name
             if not product_page_url:
                 if '/itxrest/' in url:
                     known_product_pages = {
@@ -367,6 +329,63 @@ class ZaraStockChecker:
                             print(f"  ✅ Constructed product page URL: {product_page_url}")
                 else:
                     product_page_url = url
+            
+            # Get product name and price from product page
+            product_name = None
+            product_price = None
+            
+            if product_page_url:
+                if self.verbose:
+                    print(f"  📄 Fetching product name from: {product_page_url}")
+                try:
+                    page_response = self.session.get(product_page_url, timeout=10)
+                    if page_response.status_code == 200:
+                        html = page_response.text
+                        soup = BeautifulSoup(html, 'html.parser')
+                        
+                        # Try JSON-LD first (most reliable)
+                        json_ld = soup.find('script', type='application/ld+json')
+                        if json_ld:
+                            try:
+                                data = json.loads(json_ld.string)
+                                if isinstance(data, dict):
+                                    product_name = data.get('name', 'Unknown Product')
+                                    price = data.get('offers', {}).get('price', '')
+                                    if price:
+                                        product_price = f"£{price}" if isinstance(price, (int, float)) else str(price)
+                                    if self.verbose and product_name:
+                                        print(f"  ✅ Found product name from JSON-LD: {product_name}")
+                            except Exception as e:
+                                if self.verbose:
+                                    print(f"  ⚠️  Failed to parse JSON-LD: {e}")
+                        
+                        # Fallback: try title tag
+                        if not product_name or product_name == 'Unknown Product':
+                            title_tag = soup.find('title')
+                            if title_tag:
+                                title_text = title_tag.get_text(strip=True)
+                                product_name = re.sub(r'\s*\|\s*ZARA.*$', '', title_text, flags=re.I).strip()
+                                if self.verbose and product_name:
+                                    print(f"  ✅ Found product name from title: {product_name}")
+                        
+                        # Fallback: try h1 tag
+                        if not product_name or product_name == 'Unknown Product':
+                            h1_tag = soup.find('h1')
+                            if h1_tag:
+                                product_name = h1_tag.get_text(strip=True)
+                                if self.verbose and product_name:
+                                    print(f"  ✅ Found product name from h1: {product_name}")
+                    else:
+                        if self.verbose:
+                            print(f"  ⚠️  Failed to fetch product page: HTTP {page_response.status_code}")
+                except Exception as e:
+                    if self.verbose:
+                        print(f"  ⚠️  Could not fetch product name: {e}")
+                        import traceback
+                        traceback.print_exc()
+            else:
+                if self.verbose:
+                    print(f"  ⚠️  No product page URL available to fetch name")
             
             print()
             print(f"  🔍 FINAL RESULT BUILD:")
