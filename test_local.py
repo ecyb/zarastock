@@ -8,17 +8,26 @@ import os
 import sys
 from dotenv import load_dotenv
 
-# Load .env file
-load_dotenv()
+# Load .env file (optional - may fail due to permissions)
+try:
+    load_dotenv()
+except Exception as e:
+    print(f"⚠️  Could not load .env file: {e}")
+    print("   Continuing without .env file...")
 
 # Test URL
 TEST_URL = "https://www.zara.com/uk/en/wool-double-breasted-coat-p08475319.html"
 
 def test_browserless():
-    """Test with Browserless if token/URL is set."""
+    """Test with Browserless if explicitly forced."""
+    # Force Browserless by setting FORCE_BROWSERLESS
     if not (os.environ.get("BROWSERLESS_TOKEN") or os.environ.get("BROWSERLESS_URL")):
-        print("ℹ️  BROWSERLESS_TOKEN or BROWSERLESS_URL not set, will use local Selenium")
+        print("ℹ️  BROWSERLESS_TOKEN or BROWSERLESS_URL not set, will use local browser")
         return False
+    
+    # Temporarily force Browserless for this test
+    original_force = os.environ.get("FORCE_BROWSERLESS")
+    os.environ["FORCE_BROWSERLESS"] = "true"
     
     print("🧪 Testing with Browserless...")
     try:
@@ -54,6 +63,12 @@ def test_browserless():
         import traceback
         traceback.print_exc()
         return False
+    finally:
+        # Restore original FORCE_BROWSERLESS setting
+        if original_force is None:
+            os.environ.pop("FORCE_BROWSERLESS", None)
+        else:
+            os.environ["FORCE_BROWSERLESS"] = original_force
 
 def test_local_selenium():
     """Test with local Selenium/undetected-chromedriver."""
@@ -95,12 +110,18 @@ if __name__ == "__main__":
     print("=" * 60)
     print()
     
-    # Check if Browserless token/URL is set
-    if os.environ.get("BROWSERLESS_TOKEN") or os.environ.get("BROWSERLESS_URL"):
+    # Test with local browser by default (avoids Browserless limits)
+    # Only test Browserless if explicitly requested
+    use_browserless = os.environ.get("FORCE_BROWSERLESS", "false").lower() == "true"
+    
+    if use_browserless and (os.environ.get("BROWSERLESS_TOKEN") or os.environ.get("BROWSERLESS_URL")):
+        print("ℹ️  FORCE_BROWSERLESS=true, testing with Browserless")
+        print()
         success = test_browserless()
     else:
-        print("ℹ️  BROWSERLESS_TOKEN or BROWSERLESS_URL not set, testing with local Selenium")
-        print("   (Set BROWSERLESS_TOKEN or BROWSERLESS_URL to test Browserless)")
+        print("ℹ️  Testing with local browser (default - no limits!)")
+        if os.environ.get("BROWSERLESS_TOKEN") or os.environ.get("BROWSERLESS_URL"):
+            print("   (Browserless token found but not used. Set FORCE_BROWSERLESS=true to use it)")
         print()
         success = test_local_selenium()
     

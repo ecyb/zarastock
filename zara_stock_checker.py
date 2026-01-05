@@ -17,7 +17,10 @@ import urllib3
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    try:
+        load_dotenv()
+    except (PermissionError, FileNotFoundError):
+        pass  # .env file not accessible, continue without it
 except ImportError:
     pass  # dotenv not installed, continue without it
 
@@ -46,6 +49,399 @@ class ZaraStockChecker:
             'DNT': '1',
             'Referer': 'https://www.zara.com/',
         })
+    
+    def _extract_product_info_from_url(self, url: str) -> Optional[Dict]:
+        """Extract product ID and store ID from Zara product URL, API URL, or fetch from page."""
+        import re
+        
+        # Check if URL is already an API availability endpoint
+        api_match = re.search(r'/store/(\d+)/product/id/(\d+)/availability', url)
+        if api_match:
+            store_id = int(api_match.group(1))
+            product_id = int(api_match.group(2))
+            return {'product_id': product_id, 'store_id': store_id}
+        
+        # Store ID mapping by country code
+        store_map = {
+            'uk': 10706,
+            'gb': 10706,
+            'us': 10701,
+            'es': 10702,
+            'fr': 10703,
+            'it': 10704,
+            'de': 10705,
+            'nl': 10707,
+            'be': 10708,
+            'pt': 10709,
+            'pl': 10710,
+            'cz': 10711,
+            'at': 10712,
+            'ch': 10713,
+            'ie': 10714,
+            'dk': 10715,
+            'se': 10716,
+            'no': 10717,
+            'fi': 10718,
+        }
+        
+        # Extract country from URL
+        country_match = re.search(r'/([a-z]{2})/en/', url)
+        country = country_match.group(1) if country_match else 'uk'
+        store_id = store_map.get(country, 10706)  # Default to UK
+        
+        # Fetch the page to get the actual product ID from JavaScript/JSON
+        try:
+            response = self.session.get(url, timeout=10)
+            if response.status_code == 200:
+                html = response.text
+                # Look for product ID in various places
+                # Pattern 1: window.__PRELOADED_STATE__ or similar
+                product_id_match = re.search(r'"productId"\s*:\s*"?(\d+)"?', html)
+                if product_id_match:
+                    product_id = int(product_id_match.group(1))
+                    return {'product_id': product_id, 'store_id': store_id}
+                
+                # Pattern 2: In JSON-LD or structured data
+                product_id_match = re.search(r'product[_-]?id["\']?\s*[:=]\s*["\']?(\d+)', html, re.I)
+                if product_id_match:
+                    product_id = int(product_id_match.group(1))
+                    return {'product_id': product_id, 'store_id': store_id}
+                
+                # Pattern 3: In API calls in script tags (most reliable)
+                api_match = re.search(r'/product/id/(\d+)', html)
+                if api_match:
+                    product_id = int(api_match.group(1))
+                    return {'product_id': product_id, 'store_id': store_id}
+                
+                # Pattern 4: Look for availability API calls
+                availability_match = re.search(r'/store/(\d+)/product/id/(\d+)/availability', html)
+                if availability_match:
+                    store_id = int(availability_match.group(1))
+                    product_id = int(availability_match.group(2))
+                    return {'product_id': product_id, 'store_id': store_id}
+                
+                # Pattern 5: Look in window.__PRELOADED_STATE__ or similar React state
+                state_patterns = [
+                    r'window\.__PRELOADED_STATE__\s*=\s*({.+?});',
+                    r'window\.__INITIAL_STATE__\s*=\s*({.+?});',
+                    r'"productId"\s*:\s*"?(\d+)"?',
+                    r'"product_id"\s*:\s*"?(\d+)"?',
+                ]
+                
+                for pattern in state_patterns:
+                    matches = re.finditer(pattern, html, re.DOTALL)
+                    for match in matches:
+                        try:
+                            if len(match.groups()) == 1 and match.group(1).isdigit():
+                                # Direct product ID match
+                                product_id = int(match.group(1))
+                                return {'product_id': product_id, 'store_id': store_id}
+                            elif len(match.groups()) == 1:
+                                # JSON state - try to parse
+                                state_str = match.group(1)
+                                if state_str.startswith('{'):
+                                    state_data = json.loads(state_str)
+                                    # Try common paths
+                                    product_id = (state_data.get('product', {}).get('id') or
+                                                 state_data.get('productId') or
+                                                 state_data.get('product_id'))
+                                    if product_id:
+                                        return {'product_id': int(product_id), 'store_id': store_id}
+                        except:
+                            continue
+        except Exception as e:
+            if self.verbose:
+                print(f"  ⚠️  Could not extract product ID from page: {e}")
+        
+        return None
+    
+    def _get_size_mapping_from_page(self, url: str) -> Optional[Dict[int, str]]:
+        """Get size mapping (SKU ID -> Size name) from product page."""
+        try:
+            response = self.session.get(url, timeout=10)
+            if response.status_code == 200:
+                html = response.text
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                # Look for size selector with SKU IDs
+                size_selector = soup.find('div', class_=re.compile(r'size-selector', re.I))
+                if size_selector:
+                    size_items = size_selector.find_all('li', class_=re.compile(r'size-selector-sizes.*size', re.I))
+                    size_mapping = {}
+                    
+                    for idx, item in enumerate(size_items):
+                        # Try to find SKU ID in data attributes
+                        sku_id = item.get('data-sku-id') or item.get('data-sku') or item.get('data-id')
+                        if sku_id:
+                            try:
+                                sku_id = int(sku_id)
+                            except:
+                                continue
+                        else:
+                            # If no SKU ID in attributes, we'll need to match by order
+                            # SKUs are ordered from smallest to largest
+                            continue
+                        
+                        # Get size label
+                        label = item.find('div', class_=re.compile(r'size-selector-sizes-size__label', re.I))
+                        if label:
+                            size_name = label.get_text(strip=True)
+                            if size_name:
+                                size_mapping[sku_id] = size_name
+                    
+                    if size_mapping:
+                        return size_mapping
+                    
+                    # Fallback: Extract from JavaScript/JSON data
+                    # Look for sizes array with SKU IDs
+                    size_pattern = re.search(r'"sizes"\s*:\s*\[(.*?)\]', html, re.DOTALL)
+                    if size_pattern:
+                        sizes_json = '[' + size_pattern.group(1) + ']'
+                        try:
+                            sizes_data = json.loads(sizes_json)
+                            size_mapping = {}
+                            for size_item in sizes_data:
+                                if isinstance(size_item, dict):
+                                    sku_id = size_item.get('skuId') or size_item.get('sku') or size_item.get('id')
+                                    size_name = size_item.get('name') or size_item.get('size') or size_item.get('label')
+                                    if sku_id and size_name:
+                                        try:
+                                            size_mapping[int(sku_id)] = str(size_name)
+                                        except:
+                                            pass
+                            if size_mapping:
+                                return size_mapping
+                        except:
+                            pass
+        except Exception as e:
+            if self.verbose:
+                print(f"  ⚠️  Could not get size mapping: {e}")
+        
+        return None
+    
+    def _check_stock_via_api(self, url: str) -> Optional[Dict]:
+        """Check stock using Zara's direct API endpoint (no browser needed)."""
+        import re
+        
+        # Store original URL for product name fetching
+        original_url = url
+        product_page_url = None
+        
+        # Check if URL is already an API endpoint
+        api_url = None
+        if '/itxrest/' in url and '/availability' in url:
+            api_url = url
+            # Extract product_id and store_id from URL for later use
+            match = re.search(r'/store/(\d+)/product/id/(\d+)/availability', url)
+            if match:
+                store_id = int(match.group(1))
+                product_id = int(match.group(2))
+            else:
+                if self.verbose:
+                    print("  ⚠️  Could not parse API URL")
+                return None
+        else:
+            # Extract product info from product page URL
+            product_info = self._extract_product_info_from_url(url)
+            if not product_info:
+                if self.verbose:
+                    print("  ⚠️  Could not extract product ID, falling back to HTML parsing")
+                return None
+            
+            product_id = product_info['product_id']
+            store_id = product_info['store_id']
+            product_page_url = url  # Save for later name fetching
+            
+            # Build API URL
+            api_url = f"https://www.zara.com/itxrest/1/catalog/store/{store_id}/product/id/{product_id}/availability"
+        
+        print(f"  📡 Calling API: {api_url}")
+        print(f"  📋 Request Headers:")
+        api_headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+            'Accept-Language': 'en-GB,en;q=0.9',
+            'Referer': url,
+            'Origin': 'https://www.zara.com',
+        }
+        for key, value in api_headers.items():
+            print(f"     {key}: {value}")
+        print()
+        
+        try:
+            # Call the API
+            response = self.session.get(api_url, headers=api_headers, timeout=10)
+            
+            print(f"  📥 Response Status: {response.status_code}")
+            print(f"  📥 Response Headers:")
+            for key, value in response.headers.items():
+                if key.lower() in ['content-type', 'content-length', 'date']:
+                    print(f"     {key}: {value}")
+            print()
+            
+            if response.status_code != 200:
+                print(f"  ❌ API returned status {response.status_code}")
+                print(f"  📄 Response body: {response.text[:500]}")
+                return None
+            
+            data = response.json()
+            
+            print(f"  ✅ Got API response:")
+            print(f"  {json.dumps(data, indent=2)}")
+            print()
+            
+            # Parse availability data
+            skus_availability = data.get('skusAvailability', [])
+            if not skus_availability:
+                if self.verbose:
+                    print("  ⚠️  No SKU availability data in response")
+                return None
+            
+            print(f"  📊 Found {len(skus_availability)} SKUs in response")
+            print(f"  📋 Raw SKU Availability:")
+            for sku_info in skus_availability:
+                sku_id = sku_info.get('sku')
+                availability = sku_info.get('availability', 'unknown')
+                print(f"     SKU {sku_id}: {availability}")
+            print()
+            
+            # Get size mapping (SKU ID -> Size name)
+            # First try to get from page, otherwise use generic size names based on order
+            size_mapping = self._get_size_mapping_from_page(url)
+            
+            # If no mapping from page, create one based on order (SKUs are ordered XS to XL)
+            if not size_mapping:
+                # Sort SKUs by ID (smallest = XS, largest = XL)
+                sorted_skus = sorted([s['sku'] for s in skus_availability])
+                
+                # Common size order for Zara
+                size_names = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL', '4', '6', '8', '10', '12', '14', '16', '18']
+                
+                # Create mapping: smallest SKU = first size, etc.
+                size_mapping = {}
+                for i, sku in enumerate(sorted_skus):
+                    if i < len(size_names):
+                        size_mapping[sku] = size_names[i]
+                    else:
+                        # For numeric sizes or beyond standard sizes
+                        size_mapping[sku] = f"Size {i+1}"
+                
+                print(f"  📏 Created size mapping: {size_mapping}")
+            
+            # Parse available sizes with detailed output
+            available_sizes = []
+            in_stock = False
+            
+            print(f"  🔍 Checking availability for each size:")
+            for sku_info in skus_availability:
+                sku_id = sku_info.get('sku')
+                availability = sku_info.get('availability', '').lower()
+                
+                # Map SKU to size name
+                size_name = size_mapping.get(sku_id, f"SKU {sku_id}")
+                
+                # Check availability
+                is_available = availability in ['in_stock', 'low_on_stock']
+                status_emoji = "✅" if is_available else "❌"
+                status_text = "IN STOCK" if is_available else "OUT OF STOCK"
+                
+                print(f"     {status_emoji} {size_name} (SKU {sku_id}): {status_text} ({availability})")
+                
+                if is_available:
+                    in_stock = True
+                    available_sizes.append(size_name)
+            
+            print()
+            print(f"  📈 Summary:")
+            print(f"     Total SKUs: {len(skus_availability)}")
+            print(f"     In Stock: {len(available_sizes)} ({', '.join(available_sizes) if available_sizes else 'None'})")
+            print(f"     Out of Stock: {len(skus_availability) - len(available_sizes)}")
+            print(f"     Overall Status: {'✅ IN STOCK' if in_stock else '❌ OUT OF STOCK'}")
+            print()
+            
+            # Get product name and price from the page (one-time fetch)
+            # Use product_page_url if we have it (from product page), otherwise try original URL
+            product_name = None
+            product_price = None
+            
+            # Determine which URL to use for fetching product name
+            page_url = product_page_url if product_page_url else (url if '/itxrest/' not in url else None)
+            
+            if page_url:
+                try:
+                    # Use a simple request without bot detection headers first
+                    page_response = self.session.get(page_url, timeout=10)
+                    if page_response.status_code == 200:
+                        html = page_response.text
+                        soup = BeautifulSoup(html, 'html.parser')
+                        
+                        # Try JSON-LD first (most reliable)
+                        json_ld = soup.find('script', type='application/ld+json')
+                        if json_ld:
+                            try:
+                                data = json.loads(json_ld.string)
+                                if isinstance(data, dict):
+                                    product_name = data.get('name', 'Unknown Product')
+                                    price = data.get('offers', {}).get('price', '')
+                                    if price:
+                                        product_price = f"£{price}" if isinstance(price, (int, float)) else str(price)
+                            except:
+                                pass
+                        
+                        # Fallback: try to get from title tag
+                        if not product_name:
+                            title_tag = soup.find('title')
+                            if title_tag:
+                                title_text = title_tag.get_text(strip=True)
+                                # Clean up title (remove " | ZARA" etc)
+                                product_name = re.sub(r'\s*\|\s*ZARA.*$', '', title_text, flags=re.I).strip()
+                        
+                        # Fallback: try h1 tag
+                        if not product_name:
+                            h1_tag = soup.find('h1')
+                            if h1_tag:
+                                product_name = h1_tag.get_text(strip=True)
+                except Exception as e:
+                    if self.verbose:
+                        print(f"  ⚠️  Could not fetch product name: {e}")
+                    pass
+            
+            # Build result with all fields needed for notifications
+            # Store original URL if it's a product page (for "View Product" link)
+            product_page_url = None
+            if '/itxrest/' not in url:
+                product_page_url = url
+            
+            result = {
+                'url': url,
+                'name': product_name or 'Unknown Product',
+                'price': product_price or 'N/A',
+                'in_stock': in_stock,
+                'available_sizes': sorted(available_sizes),
+                'timestamp': datetime.now().isoformat(),
+                'method': 'api',
+                'sizes': [{'size': s, 'available': True} for s in sorted(available_sizes)],  # For compatibility
+                'product_page_url': product_page_url,  # Store product page URL for Telegram link
+                'original_url': product_page_url  # Alias for compatibility
+            }
+            
+            # If we have API URL but no product name, try to get it from a product page
+            # Extract product ID and try to find the product page
+            if not product_name or product_name == 'Unknown Product':
+                if '/itxrest/' in url:
+                    # Try to find product page URL from API response or construct it
+                    # We can't easily construct it without the display ID, but we can try
+                    # to extract it from the API response if available
+                    pass  # Will be handled by fallback HTML parsing if needed
+            
+            return result
+            
+        except Exception as e:
+            if self.verbose:
+                print(f"  ❌ API call failed: {e}")
+                import traceback
+                traceback.print_exc()
+            return None
     
     def load_config(self, config_file: str) -> dict:
         """Load configuration from JSON file and .env file."""
@@ -614,8 +1010,23 @@ class ZaraStockChecker:
         return product_info if product_info else None
     
     def check_stock(self, url: str) -> Dict:
-        """Check stock for a single product URL."""
+        """Check stock for a single product URL. Tries API first, falls back to HTML parsing."""
         print(f"Checking stock for: {url}")
+        
+        # Try API approach first (no browser needed, faster, no limits)
+        if self.verbose:
+            print("  🚀 Trying API approach (no browser needed)...")
+        
+        api_result = self._check_stock_via_api(url)
+        if api_result:
+            if self.verbose:
+                print(f"  ✅ API check successful!")
+            return api_result
+        
+        # Fall back to HTML parsing if API fails
+        if self.verbose:
+            print("  ⚠️  API approach failed, falling back to HTML parsing...")
+        
         html = self.fetch_product_page(url)
         
         if not html:
@@ -653,9 +1064,15 @@ class ZaraStockChecker:
             print("⚠️  Telegram not configured properly (missing bot_token)")
             return
         
-        # Skip if there's an error or no product name
-        if 'error' in product_info or not product_info.get('name'):
+        # Skip if there's an error
+        if 'error' in product_info:
+            if self.verbose:
+                print(f"⚠️  Skipping notification due to error: {product_info.get('error')}")
             return
+        
+        # Allow notifications even if name is missing (for API-based checks)
+        # We'll use a generic name if needed
+        product_name = product_info.get('name') or product_info.get('url', 'Unknown Product')
         
         # Get list of chat IDs to notify
         chat_ids = []
@@ -679,33 +1096,67 @@ class ZaraStockChecker:
         
         try:
             is_in_stock = product_info.get('in_stock', False)
-            product_name = product_info.get('name', 'Unknown Product')
+            product_name = product_info.get('name') or 'Zara Product'
+            product_url = product_info.get('url', '')
+            method = product_info.get('method', 'html')
+            
+            # Get available sizes - support both 'available_sizes' list and 'sizes' list format
+            available_sizes = product_info.get('available_sizes', [])
+            if not available_sizes and product_info.get('sizes'):
+                # Extract from sizes list format
+                available_sizes = [s.get('size', s) if isinstance(s, dict) else s 
+                                 for s in product_info.get('sizes', []) 
+                                 if isinstance(s, dict) and s.get('available', False) or not isinstance(s, dict)]
+            
+            # Get product page URL (prefer product page over API URL)
+            view_url = product_url
+            # If URL is an API endpoint, try to get product page URL from config or construct it
+            if '/itxrest/' in product_url:
+                # Try to get product page URL from the original request
+                # Check if we have a product page URL stored
+                original_url = product_info.get('original_url') or product_info.get('product_page_url')
+                if original_url and '/itxrest/' not in original_url:
+                    view_url = original_url
+                else:
+                    # Try to construct from product name or use a generic Zara URL
+                    # For now, use the API URL but user should provide product page URL
+                    pass
             
             if is_in_stock:
-                sizes_text = ', '.join(product_info.get('available_sizes', ['Unknown']))
-                message = f"""✅ <b>Zara Item In Stock!</b>
+                sizes_text = ', '.join(available_sizes) if available_sizes else 'Unknown'
+                method_emoji = '🚀' if method == 'api' else '🌐'
+                message = f"""✅ <b>Zara Item In Stock!</b> {method_emoji}
 
 📦 <b>{product_name}</b>
-💰 Price: {product_info.get('price', 'N/A')}
-📏 Available Sizes: {sizes_text}
+📏 Available Sizes: <b>{sizes_text}</b>
 
-🔗 <a href="{product_info['url']}">View Product</a>
+🔗 <a href="{view_url}">View Product</a>
 
 ⏰ Check it out now before it sells out!"""
             else:
-                message = f"""❌ <b>Zara Item Out of Stock</b>
+                method_emoji = '🚀' if method == 'api' else '🌐'
+                message = f"""❌ <b>Zara Item Out of Stock</b> {method_emoji}
 
 📦 <b>{product_name}</b>
-💰 Price: {product_info.get('price', 'N/A')}
 📏 Status: <b>OUT OF STOCK</b>
 
-🔗 <a href="{product_info['url']}">View Product</a>
+🔗 <a href="{view_url}">View Product</a>
 
 ⏰ Will notify you when it's back in stock!"""
             
             # Send to all registered users
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             success_count = 0
+            
+            print(f"\n📤 Sending Telegram notification...")
+            print(f"   API URL: {url}")
+            print(f"   Chat IDs: {chat_ids}")
+            print(f"\n📨 Message to send:")
+            print("   " + "-" * 50)
+            for line in message.split('\n'):
+                print(f"   {line}")
+            print("   " + "-" * 50)
+            print()
             
             for cid in chat_ids:
                 try:
@@ -716,14 +1167,34 @@ class ZaraStockChecker:
                         'disable_web_page_preview': False
                     }
                     
+                    print(f"   📤 Sending to chat_id {cid}...")
+                    print(f"   📦 Payload: {json.dumps(payload, indent=6)}")
+                    
                     response = requests.post(url, json=payload, timeout=10)
                     response.raise_for_status()
-                    success_count += 1
+                    
+                    response_data = response.json()
+                    print(f"   ✅ Response: {json.dumps(response_data, indent=6)}")
+                    
+                    if response_data.get('ok'):
+                        print(f"   ✅ Successfully sent to chat_id {cid}")
+                        success_count += 1
+                    else:
+                        print(f"   ⚠️  API returned ok=false: {response_data.get('description', 'Unknown error')}")
                 except Exception as e:
-                    print(f"⚠️  Failed to send to chat_id {cid}: {e}")
+                    print(f"   ❌ Failed to send to chat_id {cid}: {e}")
+                    if hasattr(e, 'response') and e.response is not None:
+                        try:
+                            error_data = e.response.json()
+                            print(f"   📄 Error response: {json.dumps(error_data, indent=6)}")
+                        except:
+                            print(f"   📄 Error response text: {e.response.text}")
             
+            print()
             if success_count > 0:
                 print(f"✅ Telegram notification sent to {success_count} user(s) for {product_name}")
+            else:
+                print(f"❌ Failed to send Telegram notification to any users")
         except Exception as e:
             print(f"❌ Error sending Telegram notification: {e}")
     

@@ -2,6 +2,17 @@
 """
 Zara Stock Checker using undetected-chromedriver (best for bypassing bot protection)
 Requires: pip install undetected-chromedriver
+
+Browser Options:
+- Local browser (default): Uses undetected-chromedriver locally. No limits, free.
+  Set USE_LOCAL_BROWSER=true (default) to use this option.
+  
+- Browserless (optional): Cloud browser service. Has usage limits on free tier.
+  Set FORCE_BROWSERLESS=true to use Browserless instead of local browser.
+  Requires BROWSERLESS_TOKEN or BROWSERLESS_URL environment variable.
+  
+To avoid Browserless limits, use local browser (default). Local browser works
+on Railway/Docker with headless Chrome.
 """
 
 try:
@@ -85,10 +96,39 @@ class BrowserlessFetcher:
 
         self.pw = sync_playwright().start()
         # Connect over CDP websocket with stealth mode and proxy enabled
-        self.browser = self.pw.chromium.connect_over_cdp(ws)
-
-        if self.verbose:
-            print("✅ Connected to Browserless")
+        try:
+            self.browser = self.pw.chromium.connect_over_cdp(ws)
+            if self.verbose:
+                print("✅ Connected to Browserless")
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Clean up playwright if connection failed
+            try:
+                self.pw.stop()
+            except:
+                pass
+            self.pw = None
+            
+            # Check for specific error types
+            if "401" in error_msg or "unauthorized" in error_msg:
+                raise RuntimeError(
+                    f"Browserless authentication failed (401 Unauthorized). "
+                    f"This usually means: 1) Your free tier limit was reached, "
+                    f"2) Your token is invalid/expired, or 3) You need to upgrade your plan. "
+                    f"Error: {e}"
+                )
+            elif "limit" in error_msg or "usage" in error_msg:
+                raise RuntimeError(
+                    f"Browserless usage limit reached. "
+                    f"Please upgrade to a paid plan at https://account.browserless.io/ "
+                    f"or remove BROWSERLESS_TOKEN/BROWSERLESS_URL to use local browser. "
+                    f"Error: {e}"
+                )
+            else:
+                raise RuntimeError(
+                    f"Failed to connect to Browserless: {e}. "
+                    f"Check your BROWSERLESS_TOKEN/BROWSERLESS_URL configuration."
+                )
 
     def fetch_html(self, url: str, timeout_ms: int = 60000) -> Optional[str]:
         # CRITICAL: Playwright sync API is not thread-safe
@@ -112,7 +152,14 @@ class BrowserlessFetcher:
         self.pw = None
         
         # Create fresh connection
-        self._connect()
+        try:
+            self._connect()
+        except RuntimeError as e:
+            # Re-raise RuntimeError (these are our custom auth/limit errors)
+            raise
+        except Exception as e:
+            # Wrap other connection errors
+            raise RuntimeError(f"Failed to connect to Browserless: {e}")
 
         # Use stealth mode and anti-detection features
         # Browserless should handle this, but we'll add extra stealth measures
@@ -376,19 +423,46 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
         self.driver = None
         self.browserless = None
         
-        # Use Browserless if configured (for cloud deployments)
-        # Check for either BROWSERLESS_URL or BROWSERLESS_TOKEN
-        if os.environ.get("BROWSERLESS_URL") or os.environ.get("BROWSERLESS_TOKEN"):
+        # Check if user explicitly wants to use local browser (to avoid Browserless limits)
+        use_local = os.environ.get("USE_LOCAL_BROWSER", "true").lower() == "true"
+        force_browserless = os.environ.get("FORCE_BROWSERLESS", "false").lower() == "true"
+        
+        # Prefer local browser by default (avoids Browserless limits)
+        # Only use Browserless if:
+        # 1. FORCE_BROWSERLESS=true is set, OR
+        # 2. USE_LOCAL_BROWSER=false AND Browserless credentials are provided
+        should_use_browserless = force_browserless or (not use_local and (os.environ.get("BROWSERLESS_URL") or os.environ.get("BROWSERLESS_TOKEN")))
+        
+        if should_use_browserless:
             if not PLAYWRIGHT_AVAILABLE:
-                raise ImportError("BROWSERLESS_URL/BROWSERLESS_TOKEN set but Playwright not installed. Install with: pip install playwright && playwright install chromium")
-            self.browserless = BrowserlessFetcher(verbose=self.verbose)
-            if self.verbose:
-                print("✅ Using Browserless (cloud browser) - Selenium not used")
+                print("⚠️  Browserless requested but Playwright not installed.")
+                print("   Falling back to local browser. Install Playwright with: pip install playwright && playwright install chromium")
+                if not UC_AVAILABLE:
+                    raise ImportError("undetected-chromedriver is required. Install with: pip install undetected-chromedriver")
+                self._setup_driver()
+            else:
+                try:
+                    self.browserless = BrowserlessFetcher(verbose=self.verbose)
+                    if self.verbose:
+                        print("✅ Using Browserless (cloud browser) - Selenium not used")
+                        print("   💡 Tip: Set USE_LOCAL_BROWSER=true to avoid Browserless limits")
+                except Exception as e:
+                    print(f"⚠️  Failed to initialize Browserless: {e}")
+                    print("   Falling back to local browser (undetected-chromedriver)...")
+                    self.browserless = None
+                    if not UC_AVAILABLE:
+                        raise ImportError("undetected-chromedriver is required. Install with: pip install undetected-chromedriver")
+                    self._setup_driver()
         else:
-            # Only setup local Selenium if Browserless is not configured
+            # Use local browser (default - avoids Browserless limits)
             if not UC_AVAILABLE:
                 raise ImportError("undetected-chromedriver is required. Install with: pip install undetected-chromedriver")
             self._setup_driver()
+            if self.verbose:
+                print("✅ Using local browser (undetected-chromedriver) - No Browserless limits!")
+                if os.environ.get("BROWSERLESS_URL") or os.environ.get("BROWSERLESS_TOKEN"):
+                    print("   💡 Browserless credentials found but USE_LOCAL_BROWSER=true (default)")
+                    print("   💡 Set FORCE_BROWSERLESS=true to use Browserless instead")
         
         # Register cleanup on exit (more reliable than __del__)
         atexit.register(self.cleanup)
@@ -642,9 +716,30 @@ class ZaraStockCheckerBrowser(ZaraStockChecker):
         if self.browserless:
             try:
                 return self.browserless.fetch_html(url)
+            except RuntimeError as e:
+                # RuntimeError from Browserless usually means auth/limit issues
+                error_msg = str(e).lower()
+                if "401" in error_msg or "unauthorized" in error_msg or "limit" in error_msg:
+                    print(f"❌ Browserless error: {e}")
+                    print("⚠️  Falling back to local browser (undetected-chromedriver)...")
+                    # Disable Browserless and use local driver instead
+                    self.browserless = None
+                    # Setup local driver if not already set up
+                    if not self.driver:
+                        self._setup_driver()
+                    # Continue with local driver below
+                else:
+                    print(f"❌ Browserless error: {e}")
+                    return None
             except Exception as e:
                 print(f"❌ Browserless error: {e}")
-                return None
+                print("⚠️  Falling back to local browser (undetected-chromedriver)...")
+                # Disable Browserless and use local driver instead
+                self.browserless = None
+                # Setup local driver if not already set up
+                if not self.driver:
+                    self._setup_driver()
+                # Continue with local driver below
         
         # Otherwise, use local Selenium/undetected-chromedriver
         try:
