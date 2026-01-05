@@ -804,8 +804,6 @@ class ZaraStockChecker:
                 print(f"  ⏭️  Skipping notification - item is OUT OF STOCK and skip_nostock_notification=true")
             return
         
-        product_name = product_info.get('name') or 'Zara Product'
-        
         chat_ids = []
         chat_id = telegram_config.get('chat_id', '')
         if chat_id:
@@ -829,9 +827,19 @@ class ZaraStockChecker:
                                  for s in product_info.get('sizes', []) 
                                  if isinstance(s, dict) and s.get('available', False) or not isinstance(s, dict)]
             
-            # Check if product page URL should be hidden
-            hide_product_link = os.getenv('HIDE_PRODUCT_LINK', 'false').lower() == 'true'
-            view_url = None if hide_product_link else (product_info.get('product_page_url') or product_url)
+            # Get product name - use env var if set, otherwise use from product_info, or None (don't show)
+            product_name_env = os.getenv('PRODUCT_NAME', '').strip()
+            if product_name_env:
+                product_name = product_name_env
+            else:
+                product_name = product_info.get('name') or None  # Don't show name if not set
+            
+            # Get product link from env var - if empty, don't show link
+            product_link_env = os.getenv('PRODUCT_LINK', '').strip()
+            if product_link_env:
+                view_url = product_link_env
+            else:
+                view_url = None  # Don't show link if PRODUCT_LINK is empty
             
             # Get location info for message
             location = product_info.get('detected_location', 'Unknown')
