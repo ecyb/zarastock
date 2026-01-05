@@ -533,11 +533,15 @@ class ZaraStockChecker:
                 else:
                     product_page_url = url
             
-            # Get product name and price from product page
-            product_name = None
+            # Get product name - check env var first, then try to fetch from page
+            product_name = os.getenv('PRODUCT_NAME') or None
             product_price = None
             
-            if product_page_url:
+            # Skip fetching product name if manually set
+            if product_name:
+                if self.verbose:
+                    print(f"  ✅ Using product name from PRODUCT_NAME env var: {product_name}")
+            elif product_page_url:
                 if self.verbose:
                     print(f"  📄 Fetching product name from: {product_page_url}")
                 try:
@@ -824,7 +828,9 @@ class ZaraStockChecker:
                                  for s in product_info.get('sizes', []) 
                                  if isinstance(s, dict) and s.get('available', False) or not isinstance(s, dict)]
             
-            view_url = product_info.get('product_page_url') or product_url
+            # Check if product page URL should be hidden
+            hide_product_link = os.getenv('HIDE_PRODUCT_LINK', 'false').lower() == 'true'
+            view_url = None if hide_product_link else (product_info.get('product_page_url') or product_url)
             
             # Get location info for message
             location = product_info.get('detected_location', 'Unknown')
@@ -836,24 +842,22 @@ class ZaraStockChecker:
                 method_emoji = '🚀' if method == 'api' else '🌐'
                 message = f"""✅ <b>Zara Item In Stock!</b> {method_emoji}
 
-📦 <b>{product_name}</b>
-📏 Available Sizes: <b>{sizes_text}</b>
-{location_text}
-
-🔗 <a href="{view_url}">View Product</a>
-
-⏰ Check it out now before it sells out!"""
+       📦 <b>{product_name}</b>
+       📏 Available Sizes: <b>{sizes_text}</b>
+       {location_text}
+       {f'🔗 <a href="{view_url}">View Product</a>' if view_url else ''}
+       
+       ⏰ Check it out now before it sells out!"""
             else:
                 method_emoji = '🚀' if method == 'api' else '🌐'
                 message = f"""❌ <b>Zara Item Out of Stock</b> {method_emoji}
 
-📦 <b>{product_name}</b>
-📏 Status: <b>OUT OF STOCK</b>
-{location_text}
-
-🔗 <a href="{view_url}">View Product</a>
-
-⏰ Will notify you when it's back in stock!"""
+       📦 <b>{product_name}</b>
+       📏 Status: <b>OUT OF STOCK</b>
+       {location_text}
+       {f'🔗 <a href="{view_url}">View Product</a>' if view_url else ''}
+       
+       ⏰ Will notify you when it's back in stock!"""
             
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             success_count = 0
