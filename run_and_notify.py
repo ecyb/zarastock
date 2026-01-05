@@ -523,7 +523,9 @@ class ZaraStockChecker:
                 'method': 'api',
                 'sizes': [{'size': s, 'available': True} for s in sorted(available_sizes)],
                 'product_page_url': product_page_url,
-                'original_url': product_page_url
+                'original_url': product_page_url,
+                'detected_location': detected_location,  # Store location for Telegram message
+                'detected_country': detected_country
             }
             
             if self.verbose:
