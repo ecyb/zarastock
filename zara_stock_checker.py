@@ -447,6 +447,14 @@ class ZaraStockChecker:
             if '/itxrest/' not in url:
                 product_page_url = url
             
+            # Debug: Log the final in_stock value before building result
+            print()
+            print(f"  🔍 FINAL RESULT BUILD:")
+            print(f"     in_stock = {in_stock} (type: {type(in_stock)})")
+            print(f"     available_sizes = {available_sizes}")
+            print(f"     Will send notification: {'YES - IN STOCK' if in_stock else 'NO - OUT OF STOCK'}")
+            print()
+            
             result = {
                 'url': url,
                 'name': product_name or 'Unknown Product',
@@ -459,6 +467,10 @@ class ZaraStockChecker:
                 'product_page_url': product_page_url,  # Store product page URL for Telegram link
                 'original_url': product_page_url  # Alias for compatibility
             }
+            
+            # Double-check the result
+            if self.verbose:
+                print(f"  ✅ Result built: in_stock={result.get('in_stock')}, available_sizes={result.get('available_sizes')}")
             
             # If we have API URL but no product name, try to get it from a product page
             # Extract product ID and try to find the product page
