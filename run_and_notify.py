@@ -215,28 +215,49 @@ class ZaraStockChecker:
         print(f"     Product ID: {product_id}")
         print(f"     Region: UK (en-GB)")
         
-        # Check for UK proxy configuration - use free UK proxy if not set
+        # Check for UK proxy configuration - use free UK proxy if not set, fallback to no proxy if fails
         uk_proxy = os.getenv('UK_PROXY') or os.getenv('PROXY_URL')
         detected_location = "Unknown"
+        proxies = None
         
         if not uk_proxy:
-            # Use free UK proxy (Slough, GB)
+            # Use free UK proxy (Slough, GB) - will fallback to no proxy if it fails
             free_uk_proxy = "157.245.40.210:80"
             uk_proxy = f"http://{free_uk_proxy}"
-            print(f"     🔄 Using FREE UK Proxy (Slough, GB): {uk_proxy}")
+            print(f"     🔄 Trying FREE UK Proxy (Slough, GB): {uk_proxy}")
             detected_location = "UK, Slough (via free proxy)"
+            proxies = {
+                'http': uk_proxy,
+                'https': uk_proxy
+            }
         else:
             print(f"     🔄 Using UK Proxy: {uk_proxy}")
             detected_location = "UK (via proxy)"
+            proxies = {
+                'http': uk_proxy,
+                'https': uk_proxy
+            }
         
-        proxies = {
-            'http': uk_proxy,
-            'https': uk_proxy
-        }
         print()
         
         try:
-            response = self.session.get(api_url, headers=api_headers, proxies=proxies, timeout=10)
+            # Try with proxy first (if set)
+            if proxies:
+                try:
+                    response = self.session.get(api_url, headers=api_headers, proxies=proxies, timeout=10)
+                    response.raise_for_status()  # Check if request succeeded
+                except Exception as proxy_error:
+                    # Proxy failed, fallback to no proxy
+                    if not uk_proxy or uk_proxy == f"http://157.245.40.210:80":
+                        print(f"     ⚠️  Free UK proxy failed: {proxy_error}")
+                        print(f"     🔄 Falling back to NO PROXY (direct connection)")
+                        proxies = None
+                        detected_location = "Unknown"
+                        response = self.session.get(api_url, headers=api_headers, timeout=10)
+                    else:
+                        raise  # Re-raise if it's a custom proxy
+            else:
+                response = self.session.get(api_url, headers=api_headers, timeout=10)
             
             print(f"  📥 Response Status: {response.status_code}")
             print(f"  📥 Response Headers (all):")
@@ -481,7 +502,14 @@ class ZaraStockChecker:
                         except Exception as e:
                             if self.verbose:
                                 print(f"  ⚠️  Attempt {attempt + 1} failed: {e}")
-                            if attempt == 0:
+                            
+                            # If proxy failed and it's the free proxy, try without proxy
+                            if attempt == 0 and proxies and (not uk_proxy or uk_proxy == "http://157.245.40.210:80"):
+                                if self.verbose:
+                                    print(f"  🔄 Proxy failed, trying without proxy...")
+                                proxies = None
+                                continue
+                            elif attempt == 0:
                                 continue
                             else:
                                 raise
