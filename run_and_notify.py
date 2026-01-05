@@ -245,6 +245,9 @@ class ZaraStockChecker:
             if proxies:
                 try:
                     response = self.session.get(api_url, headers=api_headers, proxies=proxies, timeout=10)
+                    # Check if we got blocked (403, 429, etc.)
+                    if response.status_code in [403, 429, 503]:
+                        raise Exception(f"Proxy returned {response.status_code} - likely blocked")
                     response.raise_for_status()  # Check if request succeeded
                 except Exception as proxy_error:
                     # Proxy failed, fallback to no proxy
@@ -254,6 +257,10 @@ class ZaraStockChecker:
                         proxies = None
                         detected_location = "Unknown"
                         response = self.session.get(api_url, headers=api_headers, timeout=10)
+                        # Check if direct connection also failed
+                        if response.status_code in [403, 429, 503]:
+                            if self.verbose:
+                                print(f"     ⚠️  Direct connection also blocked: {response.status_code}")
                     else:
                         raise  # Re-raise if it's a custom proxy
             else:
@@ -435,9 +442,25 @@ class ZaraStockChecker:
                     proxies = None
                     
                     if not uk_proxy_page:
-                        # Try free UK proxy first
-                        free_uk_proxy = "http://157.245.40.210:80"
-                        proxies = {'http': free_uk_proxy, 'https': free_uk_proxy}
+                        # Try free UK proxies in order (same list as API)
+                        free_uk_proxies = [
+                            "139.162.236.244:80",  # London (Akamai) - tested and works
+                            "139.162.200.213:80",  # London (Akamai)
+                            "38.60.196.214:80",    # London (Kaopu Cloud)
+                            "157.245.40.210:80",   # Slough (DigitalOcean)
+                        ]
+                        
+                        for proxy_addr in free_uk_proxies:
+                            try:
+                                test_proxy = f"http://{proxy_addr}"
+                                test_proxies = {'http': test_proxy, 'https': test_proxy}
+                                # Quick test
+                                test_r = self.session.get(product_page_url, proxies=test_proxies, timeout=5)
+                                if test_r.status_code == 200:
+                                    proxies = test_proxies
+                                    break
+                            except:
+                                continue
                     else:
                         proxies = {'http': uk_proxy_page, 'https': uk_proxy_page}
                     
