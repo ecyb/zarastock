@@ -22,6 +22,6 @@ else
     echo ""
     echo "Or run manually in two terminals:"
     echo "  Terminal 1: python telegram_bot.py"
-    echo "  Terminal 2: python zara_stock_checker_browser.py"
+    echo "  Terminal 2: python run_and_notify.py"
 fi
 
