@@ -534,7 +534,8 @@ class ZaraStockChecker:
                     product_page_url = url
             
             # Get product name - check env var first, then try to fetch from page
-            product_name = os.getenv('PRODUCT_NAME') or None
+            product_name_env = os.getenv('PRODUCT_NAME', '').strip()
+            product_name = product_name_env if product_name_env else None
             product_price = None
             
             # Skip fetching product name if manually set
@@ -837,27 +838,27 @@ class ZaraStockChecker:
             country = product_info.get('detected_country', 'Unknown')
             location_text = f"📍 Shop Location: {location}" if location != 'Unknown' else "📍 Location: Unknown"
             
+            # Build product name line (only if name is set)
+            product_name_line = f"📦 <b>{product_name}</b>\n" if product_name else ""
+            
+            # Build product link line (only if link is set)
+            product_link_line = f"🔗 <a href=\"{view_url}\">View Product</a>\n" if view_url else ""
+            
             if is_in_stock:
                 sizes_text = ', '.join(available_sizes) if available_sizes else 'Unknown'
                 method_emoji = '🚀' if method == 'api' else '🌐'
                 message = f"""✅ <b>Zara Item In Stock!</b> {method_emoji}
 
-       📦 <b>{product_name}</b>
-       📏 Available Sizes: <b>{sizes_text}</b>
-       {location_text}
-       {f'🔗 <a href="{view_url}">View Product</a>' if view_url else ''}
-       
-       ⏰ Check it out now before it sells out!"""
+{product_name_line}📏 Available Sizes: <b>{sizes_text}</b>
+{location_text}
+{product_link_line}⏰ Check it out now before it sells out!"""
             else:
                 method_emoji = '🚀' if method == 'api' else '🌐'
                 message = f"""❌ <b>Zara Item Out of Stock</b> {method_emoji}
 
-       📦 <b>{product_name}</b>
-       📏 Status: <b>OUT OF STOCK</b>
-       {location_text}
-       {f'🔗 <a href="{view_url}">View Product</a>' if view_url else ''}
-       
-       ⏰ Will notify you when it's back in stock!"""
+{product_name_line}📏 Status: <b>OUT OF STOCK</b>
+{location_text}
+{product_link_line}⏰ Will notify you when it's back in stock!"""
             
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             success_count = 0
