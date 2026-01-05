@@ -100,12 +100,9 @@ try:
         if not telegram_config.get('bot_token') or telegram_config.get('bot_token') == 'YOUR_BOT_TOKEN':
             checker.config['telegram']['bot_token'] = bot_token
     
-    # Run in a loop (like a scheduled task)
-    print("🔄 Starting continuous stock checking loop...")
-    print("   Press CTRL+C to stop")
+    # Run once (cron job will call this script every 60 seconds)
+    print("🔍 Running stock check...")
     print()
-    
-    while True:
         try:
             for product_url in products:
                 print("=" * 60)
@@ -146,21 +143,6 @@ try:
                         print("   💡 Add chat_ids to config.json")
                 
                 print()
-            
-            # Wait before next check
-            print(f"⏳ Waiting {check_interval} seconds until next check...")
-            print()
-            time.sleep(check_interval)
-            
-        except KeyboardInterrupt:
-            print("\n\n🛑 Stopped by user")
-            break
-        except Exception as e:
-            print(f"❌ Error in check loop: {e}")
-            import traceback
-            traceback.print_exc()
-            print(f"⏳ Waiting {check_interval} seconds before retry...")
-            time.sleep(check_interval)
     
 except Exception as e:
     print(f"❌ Error: {e}")
