@@ -412,12 +412,31 @@ class ZaraStockChecker:
                     in_stock = True
                     available_sizes.append(size_name)
             
+            # Check if we should only notify when ALL sizes are in stock
+            notify_only_all_sizes = self.config.get('notify_only_all_sizes', False)
+            min_sizes_in_stock = self.config.get('min_sizes_in_stock', 0)  # 0 = notify if any size is in stock
+            
+            # If notify_only_all_sizes is true, only mark as in_stock if ALL sizes are available
+            if notify_only_all_sizes and len(available_sizes) < len(skus_availability):
+                if self.verbose:
+                    print(f"  ⚠️  notify_only_all_sizes=true: Only {len(available_sizes)}/{len(skus_availability)} sizes in stock, marking as OUT OF STOCK")
+                in_stock = False
+            # If min_sizes_in_stock is set, require at least that many sizes
+            elif min_sizes_in_stock > 0 and len(available_sizes) < min_sizes_in_stock:
+                if self.verbose:
+                    print(f"  ⚠️  min_sizes_in_stock={min_sizes_in_stock}: Only {len(available_sizes)} sizes in stock, marking as OUT OF STOCK")
+                in_stock = False
+            
             print()
             print(f"  📈 Summary:")
             print(f"     Total SKUs: {len(skus_availability)}")
             print(f"     In Stock: {len(available_sizes)} ({', '.join(available_sizes) if available_sizes else 'None'})")
             print(f"     Out of Stock: {len(skus_availability) - len(available_sizes)}")
             print(f"     Overall Status: {'✅ IN STOCK' if in_stock else '❌ OUT OF STOCK'}")
+            if notify_only_all_sizes:
+                print(f"     ⚙️  notify_only_all_sizes: true (requires ALL sizes in stock)")
+            elif min_sizes_in_stock > 0:
+                print(f"     ⚙️  min_sizes_in_stock: {min_sizes_in_stock} (requires at least {min_sizes_in_stock} sizes)")
             print()
             
             # Get product name and price from the page (one-time fetch)
