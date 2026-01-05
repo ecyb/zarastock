@@ -8,16 +8,16 @@
   ],
   "routes": [
     {
-      "src": "/api/check",
-      "dest": "/api/check.py"
+      "src": "/api/stock-check",
+      "dest": "/api/stock_check.py"
     },
     {
       "src": "/api/health",
       "dest": "/api/health.py"
     },
     {
-      "src": "/check",
-      "dest": "/api/check.py"
+      "src": "/stock-check",
+      "dest": "/api/stock_check.py"
     },
     {
       "src": "/health",

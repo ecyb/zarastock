@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from http.server import BaseHTTPRequestHandler
 
 # Add parent directory to path to import run_and_notify
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -13,7 +14,14 @@ except Exception as e:
     traceback.print_exc()
     ZaraStockChecker = None
 
-def handler(request):
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        return self.handle_request()
+    
+    def do_POST(self):
+        return self.handle_request()
+    
+    def handle_request(self):
     """Vercel serverless function for /api/check"""
     try:
         if ZaraStockChecker is None:
@@ -31,14 +39,14 @@ def handler(request):
         
         products = checker.config.get('products', [])
         if not products:
-            return {
-                'statusCode': 400,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({
-                    'error': 'No products configured',
-                    'status': 'error'
-                })
-            }
+            self.send_response(400)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'error': 'No products configured',
+                'status': 'error'
+            }).encode())
+            return
         
         results = []
         notifications_sent = set()
@@ -81,30 +89,28 @@ def handler(request):
                     'status': 'error',
                 })
         
-        return {
-            'statusCode': 200,
-            'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({
-                'status': 'success',
-                'results': results,
-                'count': len(results),
-                'notifications_sent': len(notifications_sent),
-                'checker_type': 'api'
-            })
-        }
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({
+            'status': 'success',
+            'results': results,
+            'count': len(results),
+            'notifications_sent': len(notifications_sent),
+            'checker_type': 'api'
+        }).encode())
     
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
         print(f"Error in check handler: {e}")
         print(error_trace)
-        return {
-            'statusCode': 500,
-            'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({
-                'error': str(e),
-                'status': 'error',
-                'traceback': error_trace
-            })
-        }
+        self.send_response(500)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({
+            'error': str(e),
+            'status': 'error',
+            'traceback': error_trace
+        }).encode())
 
