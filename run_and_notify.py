@@ -504,9 +504,9 @@ class ZaraStockChecker:
                                 print(f"  ⚠️  Attempt {attempt + 1} failed: {e}")
                             
                             # If proxy failed and it's the free proxy, try without proxy
-                            if attempt == 0 and proxies and (not uk_proxy or uk_proxy == "http://157.245.40.210:80"):
+                            if attempt == 0 and proxies and (not uk_proxy_page or uk_proxy_page == "http://157.245.40.210:80"):
                                 if self.verbose:
-                                    print(f"  🔄 Proxy failed, trying without proxy...")
+                                    print(f"  🔄 Proxy failed, trying without proxy (direct connection)...")
                                 proxies = None
                                 continue
                             elif attempt == 0:
