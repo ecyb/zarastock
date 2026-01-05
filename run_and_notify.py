@@ -263,10 +263,14 @@ class ZaraStockChecker:
             request_ip = response.headers.get('x-forwarded-for') or response.headers.get('cf-connecting-ip') or response.headers.get('x-real-ip')
             
             print(f"  🌍 Server Location Detection:")
+            detected_location = "Unknown"
+            detected_country = "Unknown"
+            detected_city = "Unknown"
+            
             if country_header:
                 print(f"     ✅ Detected Country/Region from headers: {country_header}")
-            else:
-                print(f"     ⚠️  No country/region header detected in response")
+                detected_location = country_header
+                detected_country = country_header
             
             if request_ip:
                 print(f"     🌐 Request IP: {request_ip}")
@@ -280,10 +284,14 @@ class ZaraStockChecker:
                             country = ip_data.get('country', 'Unknown')
                             city = ip_data.get('city', 'Unknown')
                             region = ip_data.get('regionName', 'Unknown')
+                            detected_country = country
+                            detected_city = city
+                            detected_location = f"{city}, {country}"
                             print(f"     📍 IP Location: {city}, {region}, {country}")
                             print(f"     🏢 ISP: {ip_data.get('isp', 'Unknown')}")
-                            print(f"     ⚠️  WARNING: Railway server is in {country}, NOT UK!")
-                            print(f"     ⚠️  Zara API returns inventory for {country} region, not UK!")
+                            if country != 'United Kingdom':
+                                print(f"     ⚠️  WARNING: Railway server is in {country}, NOT UK!")
+                                print(f"     ⚠️  Zara API returns inventory for {country} region, not UK!")
                 except Exception as e:
                     if self.verbose:
                         print(f"     ⚠️  Could not geolocate IP: {e}")
@@ -299,10 +307,14 @@ class ZaraStockChecker:
                             country = ip_data.get('country', 'Unknown')
                             city = ip_data.get('city', 'Unknown')
                             region = ip_data.get('regionName', 'Unknown')
+                            detected_country = country
+                            detected_city = city
+                            detected_location = f"{city}, {country}"
                             print(f"     📍 Server Location (from own IP): {city}, {region}, {country}")
                             print(f"     🏢 ISP: {ip_data.get('isp', 'Unknown')}")
-                            print(f"     ⚠️  WARNING: Railway server is in {country}, NOT UK!")
-                            print(f"     ⚠️  Zara API returns inventory for {country} region, not UK!")
+                            if country != 'United Kingdom':
+                                print(f"     ⚠️  WARNING: Railway server is in {country}, NOT UK!")
+                                print(f"     ⚠️  Zara API returns inventory for {country} region, not UK!")
                 except Exception as e:
                     if self.verbose:
                         print(f"     ⚠️  Could not detect server location: {e}")
