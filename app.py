@@ -18,32 +18,17 @@ def get_checker():
     """Get or create checker instance."""
     global checker
     if checker is None:
-        # Try browser version first (better bot protection bypass)
+        # Use API-based checker (no browser needed, faster, no limits)
         try:
-            from zara_stock_checker_browser import ZaraStockCheckerBrowser
-            checker = ZaraStockCheckerBrowser(verbose=True, headless=True)  # Enable verbose for Railway debugging
-            print("✅ Using browser-based checker (undetected-chromedriver)")
-        except ImportError as import_err:
-            # Fallback to non-browser version (may be blocked by bot protection)
-            print(f"⚠️  Browser checker not available (ImportError: {import_err})")
-            try:
-                from zara_stock_checker import ZaraStockChecker
-                checker = ZaraStockChecker(verbose=True)  # Enable verbose for Railway debugging
-                print("⚠️  Using non-browser checker (may be blocked by bot protection)")
-            except Exception as e:
-                raise Exception(f"Failed to initialize any stock checker: {str(e)}")
+            from zara_stock_checker import ZaraStockChecker
+            checker = ZaraStockChecker(verbose=True)  # Enable verbose for Railway debugging
+            print("✅ Using API-based checker (no browser needed)")
         except Exception as e:
             import traceback
             error_details = traceback.format_exc()
-            print(f"❌ Error initializing browser checker: {e}")
+            print(f"❌ Error initializing stock checker: {e}")
             print(f"Traceback: {error_details}")
-            # Try fallback
-            try:
-                from zara_stock_checker import ZaraStockChecker
-                checker = ZaraStockChecker(verbose=True)  # Enable verbose for Railway debugging
-                print("⚠️  Fallback to non-browser checker (browser automation failed)")
-            except Exception as e2:
-                raise Exception(f"Failed to initialize stock checker: {str(e)}. Browser automation not available in this environment.")
+            raise Exception(f"Failed to initialize stock checker: {str(e)}")
     return checker
 
 @app.route('/health', methods=['GET'])
@@ -145,11 +130,7 @@ def check_stock():
                 })
         
         # Determine which checker is being used
-        try:
-            from zara_stock_checker_browser import ZaraStockCheckerBrowser
-            checker_type = 'browser' if isinstance(checker_instance, ZaraStockCheckerBrowser) else 'non-browser'
-        except ImportError:
-            checker_type = 'non-browser'
+        checker_type = 'api'
         
         return jsonify({
             'status': 'success',
