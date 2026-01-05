@@ -329,6 +329,12 @@ class ZaraStockChecker:
                 print(f"     SKU {sku_id}: {availability}")
             print()
             
+            # Log the exact SKU IDs for debugging
+            sku_ids = [s.get('sku') for s in skus_availability]
+            print(f"  🔍 SKU IDs received: {sku_ids}")
+            print(f"  🔍 API URL called: {api_url}")
+            print()
+            
             # Get size mapping (SKU ID -> Size name)
             # First try to get from page, otherwise use generic size names based on order
             size_mapping = self._get_size_mapping_from_page(url)
