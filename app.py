@@ -88,20 +88,25 @@ def check_stock():
                         'in_stock': stock_info.get('in_stock', False)
                     }
                 
-                # Only send notification if item is IN STOCK (same logic as run_and_notify.py)
+                # Send notification (send_notification handles skip_nostock_notification logic)
                 url = stock_info.get('url', product_url)
                 current_in_stock = stock_info.get('in_stock', False)
+                skip_nostock = checker_instance.config.get('skip_nostock_notification', False)
                 
-                # Only send if in stock (send_notification already checks this, but be explicit)
-                if current_in_stock:
+                # Check if we should send notification
+                should_send = True
+                if skip_nostock and not current_in_stock:
+                    # Skip if skip_nostock=true and item is out of stock
+                    should_send = False
+                    if checker_instance.verbose:
+                        print(f"  ⏭️  Skipping notification - item is OUT OF STOCK and skip_nostock_notification=true")
+                
+                if should_send:
                     try:
                         checker_instance.send_notification(stock_info)
                         notifications_sent.append(url)
                     except Exception as notify_error:
                         print(f"⚠️  Failed to send notification for {url}: {notify_error}")
-                else:
-                    if checker_instance.verbose:
-                        print(f"  ⏭️  Skipping notification - item is OUT OF STOCK")
                 
                 results.append({
                     'url': stock_info.get('url'),
@@ -160,21 +165,26 @@ def check_single(url):
         # Get skip_nostock_notification setting (default: false - send all notifications)
         skip_nostock = checker_instance.config.get('skip_nostock_notification', False)
         
-        # Only send notification if item is IN STOCK (same logic as run_and_notify.py)
+        # Send notification (send_notification handles skip_nostock_notification logic)
         product_url = stock_info.get('url', url)
         current_in_stock = stock_info.get('in_stock', False)
+        skip_nostock = checker_instance.config.get('skip_nostock_notification', False)
         
         notification_sent = False
-        # Only send if in stock (send_notification already checks this, but be explicit)
-        if current_in_stock:
+        # Check if we should send notification
+        should_send = True
+        if skip_nostock and not current_in_stock:
+            # Skip if skip_nostock=true and item is out of stock
+            should_send = False
+            if checker_instance.verbose:
+                print(f"  ⏭️  Skipping notification - item is OUT OF STOCK and skip_nostock_notification=true")
+        
+        if should_send:
             try:
                 checker_instance.send_notification(stock_info)
                 notification_sent = True
             except Exception as notify_error:
                 print(f"⚠️  Failed to send notification for {product_url}: {notify_error}")
-        else:
-            if checker_instance.verbose:
-                print(f"  ⏭️  Skipping notification - item is OUT OF STOCK")
         
         return jsonify({
             'status': 'success',
