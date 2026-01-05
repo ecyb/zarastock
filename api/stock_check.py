@@ -16,12 +16,12 @@ except Exception as e:
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        return self.handle_request()
+        self.handle_stock_check()
     
     def do_POST(self):
-        return self.handle_request()
+        self.handle_stock_check()
     
-    def handle_request(self):
+    def handle_stock_check(self):
         """Vercel serverless function for /api/stock-check"""
         try:
             if ZaraStockChecker is None:

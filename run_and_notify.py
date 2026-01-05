@@ -192,6 +192,9 @@ class ZaraStockChecker:
         print(f"  📡 Calling API: {api_url}")
         print(f"  📋 Request Headers:")
         
+        # Expected UK SKUs - fail closed if we don't get these
+        EXPECTED_UK_SKUS = {483272260, 483272258, 483272259, 483272256, 483272257}
+        
         # Use consistent headers to get consistent SKU responses
         api_headers = {
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -214,6 +217,33 @@ class ZaraStockChecker:
         print(f"     Store ID: {store_id}")
         print(f"     Product ID: {product_id}")
         print(f"     Region: UK (en-GB)")
+        
+        # Warm UK session first - visit UK homepage to get UK cookies
+        # If blocked (403), skip and continue - API might still work
+        print(f"  🔥 Warming UK session (getting UK cookies)...")
+        uk_session_warmed = False
+        try:
+            warm_response = self.session.get(
+                "https://www.zara.com/uk/en/",
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-GB,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                },
+                timeout=20
+            )
+            if warm_response.status_code == 200:
+                print(f"     ✅ UK session warmed (got UK cookies)")
+                uk_session_warmed = True
+            elif warm_response.status_code == 403:
+                print(f"     ⚠️  UK session warm blocked (403) - bot protection, continuing anyway")
+            else:
+                print(f"     ⚠️  UK session warm returned {warm_response.status_code}")
+        except Exception as e:
+            print(f"     ⚠️  Failed to warm UK session: {e} - continuing anyway")
+        
+        print()
         
         # Check for UK proxy configuration - use free UK proxy if not set, fallback to no proxy if fails
         uk_proxy = os.getenv('UK_PROXY') or os.getenv('PROXY_URL')
@@ -302,6 +332,23 @@ class ZaraStockChecker:
                 response = self.session.get(api_url, headers=api_headers, timeout=10)
             
             print(f"  📥 Response Status: {response.status_code}")
+            
+            # Check if we got blocked by bot protection
+            if response.status_code == 403:
+                print(f"  ❌ API returned 403 - Bot protection blocking request")
+                print(f"  📄 Response body: {response.text[:500]}")
+                print(f"  ⚠️  Zara is blocking automated requests - cannot check stock")
+                return {
+                    'url': url,
+                    'in_stock': False,
+                    'available_sizes': [],
+                    'name': None,
+                    'price': None,
+                    'method': 'api',
+                    'error': '403 Forbidden - Bot protection blocking request',
+                    'timestamp': datetime.now().isoformat()
+                }
+            
             print(f"  📥 Response Headers (all):")
             for key, value in response.headers.items():
                 print(f"     {key}: {value}")
@@ -387,6 +434,7 @@ class ZaraStockChecker:
                 return None
             
             received_skus = [s.get('sku') for s in skus_availability if s.get('sku')]
+            received_skus_set = set(received_skus)
             
             print(f"  📊 Found {len(skus_availability)} SKUs in response")
             print(f"  🔍 SKU IDs received: {received_skus}")
@@ -394,12 +442,28 @@ class ZaraStockChecker:
             for sku_info in skus_availability:
                 print(f"     SKU {sku_info.get('sku')}: {sku_info.get('availability')}")
             
-            # WARNING: Different regions return different SKUs!
-            expected_uk_skus = [483272260, 483272258, 483272259, 483272256, 483272257]
-            if set(received_skus) != set(expected_uk_skus):
-                print(f"  ⚠️  WARNING: Received SKUs {received_skus} differ from expected UK SKUs {expected_uk_skus}")
-                print(f"  ⚠️  This means the server is checking a DIFFERENT REGION's inventory!")
-                print(f"  ⚠️  Server IP location is NOT in UK - inventory shown is for server's region, not UK")
+            # FAIL CLOSED: Check if we got UK SKUs
+            overlap = received_skus_set & EXPECTED_UK_SKUS
+            if not overlap:
+                print(f"  ❌ ERROR: Received SKUs {sorted(received_skus)} do NOT match expected UK SKUs {sorted(EXPECTED_UK_SKUS)}")
+                print(f"  ❌ This is NOT UK inventory - ignoring response")
+                print(f"  ❌ Region mismatch detected - cannot determine UK stock status")
+                return {
+                    'url': url,
+                    'in_stock': False,
+                    'available_sizes': [],
+                    'name': None,
+                    'price': None,
+                    'method': 'api',
+                    'error': f'Region mismatch: Got SKUs {sorted(received_skus)} but expected UK SKUs {sorted(EXPECTED_UK_SKUS)}',
+                    'timestamp': datetime.now().isoformat()
+                }
+            
+            if received_skus_set != EXPECTED_UK_SKUS:
+                print(f"  ⚠️  WARNING: Received SKUs {sorted(received_skus)} differ from expected UK SKUs {sorted(EXPECTED_UK_SKUS)}")
+                print(f"  ⚠️  Overlap: {sorted(overlap)} - partial match, may be mixed region")
+            else:
+                print(f"  ✅ Confirmed UK SKUs: {sorted(received_skus)}")
             print()
             
             # Get size mapping
@@ -426,6 +490,11 @@ class ZaraStockChecker:
                 availability = sku_info.get('availability', '').lower()
                 
                 size_name = size_mapping.get(sku_id, f"SKU {sku_id}")
+                
+                # Only count UK SKUs as available
+                if sku_id not in EXPECTED_UK_SKUS:
+                    print(f"     ⚠️  {size_name} (SKU {sku_id}): SKIPPED (not a UK SKU)")
+                    continue
                 
                 is_available = False
                 if availability == 'in_stock' or availability == 'low_on_stock':
