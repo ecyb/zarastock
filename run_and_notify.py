@@ -1147,6 +1147,7 @@ def create_flask_app():
                     return jsonify({'error': 'Invalid JSON'}), 400
                 
                 # Process the update
+                checker = get_checker()
                 process_telegram_webhook_update(update, checker)
                 
                 return jsonify({'ok': True})
