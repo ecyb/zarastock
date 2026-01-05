@@ -214,10 +214,23 @@ class ZaraStockChecker:
         print(f"     Store ID: {store_id}")
         print(f"     Product ID: {product_id}")
         print(f"     Region: UK (en-GB)")
+        
+        # Check for UK proxy configuration
+        uk_proxy = os.getenv('UK_PROXY') or os.getenv('PROXY_URL')
+        if uk_proxy:
+            print(f"     🔄 Using UK Proxy: {uk_proxy}")
+            proxies = {
+                'http': uk_proxy,
+                'https': uk_proxy
+            }
+        else:
+            proxies = None
+            print(f"     ⚠️  No UK proxy configured - requests will come from Railway server location")
+            print(f"     💡 Set UK_PROXY env var to route requests through UK (e.g., UK_PROXY=http://uk-proxy:port)")
         print()
         
         try:
-            response = self.session.get(api_url, headers=api_headers, timeout=10)
+            response = self.session.get(api_url, headers=api_headers, proxies=proxies, timeout=10)
             
             print(f"  📥 Response Status: {response.status_code}")
             print(f"  📥 Response Headers (all):")
@@ -378,7 +391,10 @@ class ZaraStockChecker:
                 if self.verbose:
                     print(f"  📄 Fetching product name from: {product_page_url}")
                 try:
-                    page_response = self.session.get(product_page_url, timeout=10)
+                    # Use UK proxy if configured
+                    uk_proxy = os.getenv('UK_PROXY') or os.getenv('PROXY_URL')
+                    proxies = {'http': uk_proxy, 'https': uk_proxy} if uk_proxy else None
+                    page_response = self.session.get(product_page_url, proxies=proxies, timeout=10)
                     if page_response.status_code == 200:
                         html = page_response.text
                         soup = BeautifulSoup(html, 'html.parser')
