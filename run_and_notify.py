@@ -32,6 +32,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 class ZaraStockChecker:
     def __init__(self, config_file: str = "config.json", verbose: bool = False):
         """Initialize the stock checker with configuration."""
+        self.config_file = config_file
         self.config = self.load_config(config_file)
         self.verbose = verbose
         self.session = requests.Session()
@@ -918,6 +919,132 @@ class ZaraStockChecker:
 # Flask API server for /check endpoint
 _checker_instance = None  # Global checker instance
 
+
+def process_telegram_webhook_update(update: dict, checker_instance):
+    """Process a Telegram bot update for webhook."""
+    import requests
+    
+    telegram_config = checker_instance.config.get('telegram', {})
+    bot_token = telegram_config.get('bot_token', '') or os.getenv('TELEGRAM_BOT_TOKEN')
+    
+    if not bot_token:
+        print("⚠️  TELEGRAM_BOT_TOKEN not set, cannot process webhook")
+        return
+    
+    def send_telegram_message(chat_id: str, text: str):
+        """Send a message via Telegram bot."""
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': text,
+            'parse_mode': 'HTML'
+        }
+        try:
+            response = requests.post(url, json=payload, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"Error sending Telegram message: {e}")
+            return None
+    
+    def register_user(user_id: str, username: str = None, first_name: str = None):
+        """Register a user by adding them to chat_ids in config.json."""
+        config = checker_instance.config
+        
+        if 'telegram' not in config:
+            config['telegram'] = {}
+        if 'chat_ids' not in config['telegram']:
+            config['telegram']['chat_ids'] = []
+        
+        # Convert user_id to string for consistency
+        user_id_str = str(user_id)
+        
+        # Check if user is already registered
+        chat_ids = config['telegram']['chat_ids']
+        if user_id_str in chat_ids:
+            return False, "User already registered"
+        
+        # Add user to chat_ids
+        chat_ids.append(user_id_str)
+        
+        # Save config
+        try:
+            # Use the same config file path as the checker
+            config_file = getattr(checker_instance, 'config_file', 'config.json')
+            with open(config_file, 'w') as f:
+                json.dump(config, f, indent=2)
+            # Reload config in checker instance
+            checker_instance.config = config
+            return True, f"User {user_id_str} ({username or first_name or 'Unknown'}) registered successfully"
+        except Exception as e:
+            print(f"⚠️  Error saving config: {e}")
+            return False, f"Error saving config: {e}"
+    
+    # Handle /start command
+    if 'message' in update:
+        message = update['message']
+        text = message.get('text', '').strip()
+        user = message.get('from')
+        chat_id = str(message.get('chat', {}).get('id', ''))
+        
+        if not user:
+            return
+        
+        user_id = str(user.get('id'))
+        username = user.get('username')
+        first_name = user.get('first_name', '')
+        last_name = user.get('last_name', '')
+        full_name = f"{first_name} {last_name}".strip() or username or f"User {user_id}"
+        
+        if text == '/start':
+            # Register the user
+            registered, message_text = register_user(user_id, username, full_name)
+            
+            if registered:
+                welcome_message = f"""✅ <b>Welcome!</b>
+
+You've been registered for Zara stock notifications.
+
+You'll receive notifications when the tracked items come back in stock.
+
+To stop notifications, you can block the bot."""
+            elif "already registered" in message_text.lower():
+                welcome_message = f"""👋 <b>Welcome back!</b>
+
+You're already registered for Zara stock notifications.
+
+You'll continue to receive notifications when tracked items come back in stock."""
+            else:
+                welcome_message = f"""❌ <b>Registration Failed</b>
+
+{message_text}
+
+Please try again or contact the administrator."""
+            
+            send_telegram_message(chat_id, welcome_message)
+            print(f"Processed /start from user {user_id} ({full_name}) - Registered: {registered}")
+        
+        elif text == '/status':
+            # Check if user is registered
+            config = checker_instance.config
+            chat_ids = config.get('telegram', {}).get('chat_ids', [])
+            
+            if user_id in chat_ids:
+                status_message = f"""✅ <b>Status: Registered</b>
+
+You're registered for Zara stock notifications.
+
+Registered users: {len(chat_ids)}"""
+            else:
+                status_message = """❌ <b>Status: Not Registered</b>
+
+You're not registered for notifications.
+
+Send /start to register."""
+            
+            send_telegram_message(chat_id, status_message)
+
+
 def create_flask_app():
     """Create Flask app for /check endpoint."""
     try:
@@ -1005,6 +1132,30 @@ def create_flask_app():
         def health():
             """Health check endpoint."""
             return jsonify({'status': 'ok', 'service': 'zara-stock-checker'})
+        
+        @app.route('/webhook', methods=['GET', 'POST'])
+        @app.route('/api/webhook', methods=['GET', 'POST'])
+        def telegram_webhook():
+            """Telegram webhook endpoint to handle /start commands."""
+            try:
+                if request.method == 'GET':
+                    return jsonify({'status': 'ok', 'service': 'telegram-webhook'})
+                
+                # Handle POST request from Telegram
+                update = request.get_json()
+                if not update:
+                    return jsonify({'error': 'Invalid JSON'}), 400
+                
+                # Process the update
+                process_telegram_webhook_update(update, checker)
+                
+                return jsonify({'ok': True})
+            
+            except Exception as e:
+                print(f"Error processing webhook: {e}")
+                import traceback
+                traceback.print_exc()
+                return jsonify({'error': str(e)}), 500
         
         return app
     except ImportError:
