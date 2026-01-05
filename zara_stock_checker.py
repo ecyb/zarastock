@@ -607,6 +607,27 @@ class ZaraStockChecker:
             # Support "true", "1", "yes" as true, anything else as false
             config['skip_nostock_notification'] = skip_nostock_env.lower() in ('true', '1', 'yes')
         
+        # Override notify_only_all_sizes from environment variable if set
+        notify_all_sizes_env = os.getenv('NOTIFY_ONLY_ALL_SIZES')
+        if notify_all_sizes_env is not None:
+            config['notify_only_all_sizes'] = notify_all_sizes_env.lower() in ('true', '1', 'yes')
+        
+        # Override min_sizes_in_stock from environment variable if set
+        min_sizes_env = os.getenv('MIN_SIZES_IN_STOCK')
+        if min_sizes_env is not None:
+            try:
+                config['min_sizes_in_stock'] = int(min_sizes_env)
+            except ValueError:
+                pass  # Keep default if invalid
+        
+        # Override check_interval from environment variable if set
+        check_interval_env = os.getenv('CHECK_INTERVAL')
+        if check_interval_env is not None:
+            try:
+                config['check_interval'] = int(check_interval_env)
+            except ValueError:
+                pass  # Keep default if invalid
+        
         return config
     
     def fetch_product_page(self, url: str) -> Optional[str]:
