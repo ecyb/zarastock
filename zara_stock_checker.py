@@ -335,15 +335,21 @@ class ZaraStockChecker:
             response = self.session.get(api_url, headers=api_headers, timeout=10)
             
             print(f"  📥 Response Status: {response.status_code}")
-            print(f"  📥 Response Headers:")
+            print(f"  📥 Response Headers (all):")
             for key, value in response.headers.items():
-                if key.lower() in ['content-type', 'content-length', 'date', 'x-country-code', 'cf-ray', 'cf-ipcountry']:
-                    print(f"     {key}: {value}")
+                print(f"     {key}: {value}")
             
             # Check if response indicates region/country
-            country_header = response.headers.get('cf-ipcountry') or response.headers.get('x-country-code')
+            country_header = response.headers.get('cf-ipcountry') or response.headers.get('x-country-code') or response.headers.get('x-region')
             if country_header:
-                print(f"  🌍 Detected Country/Region: {country_header}")
+                print(f"  🌍 Detected Country/Region from headers: {country_header}")
+            else:
+                print(f"  ⚠️  No country/region header detected - Zara may be using IP geolocation")
+            
+            # Log request IP info if available
+            request_ip = response.headers.get('x-forwarded-for') or response.headers.get('cf-connecting-ip')
+            if request_ip:
+                print(f"  🌐 Request IP: {request_ip}")
             print()
             
             if response.status_code != 200:
