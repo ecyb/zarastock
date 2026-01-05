@@ -470,18 +470,21 @@ class ZaraStockChecker:
             # Build result with all fields needed for notifications
             # Store original URL if it's a product page (for "View Product" link)
             # If we're using API URL, product_page_url should already be set from mapping above
-            if '/itxrest/' in url and not product_page_url:
-                # If we still don't have product_page_url, try to construct it from known mapping
-                known_product_pages = {
-                    483276547: ('uk', 'wool-double-breasted-coat-p08475319'),
-                }
-                if product_id in known_product_pages:
-                    country, slug = known_product_pages[product_id]
-                    product_page_url = f"https://www.zara.com/{country}/en/{slug}.html"
-                    if self.verbose:
-                        print(f"  ✅ Constructed product page URL: {product_page_url}")
-            elif '/itxrest/' not in url:
-                product_page_url = url
+            # If not set yet, try to construct it from known mapping
+            if not product_page_url:
+                if '/itxrest/' in url:
+                    # Try to construct from known mapping
+                    known_product_pages = {
+                        483276547: ('uk', 'wool-double-breasted-coat-p08475319'),
+                    }
+                    if product_id in known_product_pages:
+                        country, slug = known_product_pages[product_id]
+                        product_page_url = f"https://www.zara.com/{country}/en/{slug}.html"
+                        if self.verbose:
+                            print(f"  ✅ Constructed product page URL: {product_page_url}")
+                else:
+                    # Original URL is a product page
+                    product_page_url = url
             
             # Debug: Log the final in_stock value before building result
             print()
