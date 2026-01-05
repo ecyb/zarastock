@@ -20,8 +20,9 @@ else
     echo "Please start Docker Desktop first, then run:"
     echo "  docker compose up -d"
     echo ""
-    echo "Or run manually in two terminals:"
-    echo "  Terminal 1: python telegram_bot.py"
-    echo "  Terminal 2: python run_and_notify.py"
+    echo "Or run manually:"
+    echo "  python run_and_notify.py"
+    echo "  OR"
+    echo "  python app.py (for Flask API server)"
 fi
 
