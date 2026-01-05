@@ -96,6 +96,13 @@ class ZaraStockChecker:
             # Add more mappings as needed
         }
         
+        # Reverse mapping: product_id -> product page URL
+        # Format: product_id -> (country, slug)
+        known_product_pages = {
+            483276547: ('uk', 'wool-double-breasted-coat-p08475319'),
+            # Add more mappings as needed
+        }
+        
         # Try to match known product from URL
         url_slug_match = re.search(r'/([^/]+-p\d+)\.html', url)
         if url_slug_match:
@@ -260,6 +267,19 @@ class ZaraStockChecker:
             if match:
                 store_id = int(match.group(1))
                 product_id = int(match.group(2))
+                
+                # Try to get product page URL from known mapping
+                # Reverse mapping: product_id -> (country, slug)
+                known_product_pages = {
+                    483276547: ('uk', 'wool-double-breasted-coat-p08475319'),
+                    # Add more mappings as needed
+                }
+                
+                if product_id in known_product_pages:
+                    country, slug = known_product_pages[product_id]
+                    product_page_url = f"https://www.zara.com/{country}/en/{slug}.html"
+                    if self.verbose:
+                        print(f"  ✅ Found product page URL from mapping: {product_page_url}")
             else:
                 if self.verbose:
                     print("  ⚠️  Could not parse API URL")
@@ -449,8 +469,18 @@ class ZaraStockChecker:
             
             # Build result with all fields needed for notifications
             # Store original URL if it's a product page (for "View Product" link)
-            product_page_url = None
-            if '/itxrest/' not in url:
+            # If we're using API URL, product_page_url should already be set from mapping above
+            if '/itxrest/' in url and not product_page_url:
+                # If we still don't have product_page_url, try to construct it from known mapping
+                known_product_pages = {
+                    483276547: ('uk', 'wool-double-breasted-coat-p08475319'),
+                }
+                if product_id in known_product_pages:
+                    country, slug = known_product_pages[product_id]
+                    product_page_url = f"https://www.zara.com/{country}/en/{slug}.html"
+                    if self.verbose:
+                        print(f"  ✅ Constructed product page URL: {product_page_url}")
+            elif '/itxrest/' not in url:
                 product_page_url = url
             
             # Debug: Log the final in_stock value before building result
