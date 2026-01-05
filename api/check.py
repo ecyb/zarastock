@@ -5,11 +5,27 @@ import sys
 # Add parent directory to path to import run_and_notify
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from run_and_notify import ZaraStockChecker
+try:
+    from run_and_notify import ZaraStockChecker
+except Exception as e:
+    print(f"Error importing ZaraStockChecker: {e}")
+    import traceback
+    traceback.print_exc()
+    ZaraStockChecker = None
 
 def handler(request):
     """Vercel serverless function for /api/check"""
     try:
+        if ZaraStockChecker is None:
+            return {
+                'statusCode': 500,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({
+                    'error': 'Failed to import ZaraStockChecker',
+                    'status': 'error'
+                })
+            }
+        
         # Get products from environment or config
         checker = ZaraStockChecker(verbose=False)
         
@@ -58,6 +74,7 @@ def handler(request):
                 import traceback
                 error_trace = traceback.format_exc()
                 print(f"Error checking {product_url}: {e}")
+                print(error_trace)
                 results.append({
                     'url': product_url,
                     'error': str(e),
@@ -86,7 +103,8 @@ def handler(request):
             'headers': {'Content-Type': 'application/json'},
             'body': json.dumps({
                 'error': str(e),
-                'status': 'error'
+                'status': 'error',
+                'traceback': error_trace
             })
         }
 
