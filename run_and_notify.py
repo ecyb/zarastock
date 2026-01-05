@@ -32,12 +32,9 @@ try:
         print(f"   Current ZARA_PRODUCTS env: {os.getenv('ZARA_PRODUCTS', 'NOT SET')}")
         sys.exit(1)
     
-    # load_config already handles env vars, but let's verify and show what's being used
+    # load_config already handles ZARA_PRODUCTS and SKIP_NOSTOCK_NOTIFICATION from env vars
     zara_products_env = os.getenv('ZARA_PRODUCTS')
     skip_nostock_env = os.getenv('SKIP_NOSTOCK_NOTIFICATION')
-    notify_all_sizes_env = os.getenv('NOTIFY_ONLY_ALL_SIZES')
-    min_sizes_env = os.getenv('MIN_SIZES_IN_STOCK')
-    check_interval_env = os.getenv('CHECK_INTERVAL')
     
     print("📋 Configuration:")
     if zara_products_env:
@@ -50,27 +47,10 @@ try:
     else:
         print(f"   📄 skip_nostock_notification from config.json: {checker.config.get('skip_nostock_notification', False)}")
     
-    if notify_all_sizes_env is not None:
-        print(f"   ✅ NOTIFY_ONLY_ALL_SIZES from env: {notify_all_sizes_env}")
-    else:
-        print(f"   📄 notify_only_all_sizes from config.json: {checker.config.get('notify_only_all_sizes', False)}")
-    
-    if min_sizes_env is not None:
-        print(f"   ✅ MIN_SIZES_IN_STOCK from env: {min_sizes_env}")
-    else:
-        print(f"   📄 min_sizes_in_stock from config.json: {checker.config.get('min_sizes_in_stock', 0)}")
-    
-    # Get check interval from config (default: 60 seconds)
-    check_interval = checker.config.get('check_interval', 60)
-    if check_interval_env:
-        print(f"   ✅ CHECK_INTERVAL from env: {check_interval_env}")
-    print(f"⏰ Check interval: {check_interval} seconds")
     print(f"📦 Products to check: {len(products)}")
     for i, url in enumerate(products, 1):
         print(f"   {i}. {url}")
     print(f"⚙️  skip_nostock_notification: {checker.config.get('skip_nostock_notification', False)}")
-    print(f"⚙️  notify_only_all_sizes: {checker.config.get('notify_only_all_sizes', False)}")
-    print(f"⚙️  min_sizes_in_stock: {checker.config.get('min_sizes_in_stock', 0)}")
     print()
     
     # Check Telegram config
@@ -104,46 +84,49 @@ try:
     print("🔍 Running stock check...")
     print()
     
-    try:
-        for product_url in products:
-                print("=" * 60)
-                print(f"🔍 Checking: {product_url}")
-                print("=" * 60)
-                print()
-                
-                # Check stock
-                stock_info = checker.check_stock(product_url)
-                
-                print()
-                print("=" * 60)
-                print("📦 Stock Check Result:")
-                print("=" * 60)
-                print(f"   Name: {stock_info.get('name', 'N/A')}")
-                print(f"   Price: {stock_info.get('price', 'N/A')}")
-                print(f"   In Stock: {'✅ YES' if stock_info.get('in_stock') else '❌ NO'}")
-                print(f"   Available Sizes: {', '.join(stock_info.get('available_sizes', []))}")
-                print(f"   Method: {stock_info.get('method', 'html')}")
-                print("=" * 60)
-                print()
-                
-                # Send notification (send_notification handles skip_nostock_notification logic)
-                if bot_token and bot_token != 'YOUR_BOT_TOKEN' and chat_ids:
-                    print("2️⃣  Sending Telegram notification...")
-                    try:
-                        checker.send_notification(stock_info)
-                        print("   ✅ Notification sent successfully!")
-                    except Exception as e:
-                        print(f"   ❌ Error sending notification: {e}")
-                        import traceback
-                        traceback.print_exc()
-                else:
-                    print("2️⃣  Skipping Telegram notification (not configured)")
-                    if not bot_token or bot_token == 'YOUR_BOT_TOKEN':
-                        print("   💡 Set bot token to enable notifications")
-                    elif not chat_ids:
-                        print("   💡 Add chat_ids to config.json")
-                
-                print()
+    for product_url in products:
+        print("=" * 60)
+        print(f"🔍 Checking: {product_url}")
+        print("=" * 60)
+        print()
+        
+        # Check stock
+        stock_info = checker.check_stock(product_url)
+        
+        print()
+        print("=" * 60)
+        print("📦 Stock Check Result:")
+        print("=" * 60)
+        print(f"   Name: {stock_info.get('name', 'N/A')}")
+        print(f"   Price: {stock_info.get('price', 'N/A')}")
+        print(f"   In Stock: {'✅ YES' if stock_info.get('in_stock') else '❌ NO'}")
+        print(f"   Available Sizes: {', '.join(stock_info.get('available_sizes', []))}")
+        print(f"   Method: {stock_info.get('method', 'html')}")
+        print("=" * 60)
+        print()
+        
+        # Send notification (send_notification handles skip_nostock_notification logic)
+        if bot_token and bot_token != 'YOUR_BOT_TOKEN' and chat_ids:
+            print("2️⃣  Sending Telegram notification...")
+            try:
+                checker.send_notification(stock_info)
+                print("   ✅ Notification sent successfully!")
+            except Exception as e:
+                print(f"   ❌ Error sending notification: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print("2️⃣  Skipping Telegram notification (not configured)")
+            if not bot_token or bot_token == 'YOUR_BOT_TOKEN':
+                print("   💡 Set bot token to enable notifications")
+            elif not chat_ids:
+                print("   💡 Add chat_ids to config.json")
+        
+        print()
+    
+    print("=" * 60)
+    print("✅ Done!")
+    print("=" * 60)
     
 except Exception as e:
     print(f"❌ Error: {e}")
