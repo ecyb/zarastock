@@ -215,38 +215,24 @@ class ZaraStockChecker:
         print(f"     Product ID: {product_id}")
         print(f"     Region: UK (en-GB)")
         
-        # Check for UK proxy configuration - try free proxy if not set
+        # Check for UK proxy configuration - use free UK proxy if not set
         uk_proxy = os.getenv('UK_PROXY') or os.getenv('PROXY_URL')
         detected_location = "Unknown"
         
         if not uk_proxy:
-            # Try to get a free UK proxy from proxy list
-            try:
-                import requests as req_lib
-                # Try free proxy API (example - you may need to replace with actual free proxy service)
-                # For now, we'll try to get UK proxy from a free proxy list
-                proxy_response = req_lib.get("https://api.proxyscrape.com/v2/?request=get&protocol=http&country=GB&timeout=10000&ssl=yes", timeout=5)
-                if proxy_response.status_code == 200 and proxy_response.text.strip():
-                    proxies_list = proxy_response.text.strip().split('\n')
-                    if proxies_list:
-                        uk_proxy = f"http://{proxies_list[0].strip()}"
-                        print(f"     🔄 Using FREE UK Proxy: {uk_proxy}")
-                        detected_location = "UK (via free proxy)"
-            except Exception as e:
-                if self.verbose:
-                    print(f"     ⚠️  Could not get free UK proxy: {e}")
-        
-        if uk_proxy:
-            print(f"     🔄 Using UK Proxy: {uk_proxy}")
-            proxies = {
-                'http': uk_proxy,
-                'https': uk_proxy
-            }
-            detected_location = "UK (via proxy)"
+            # Use free UK proxy (Slough, GB)
+            free_uk_proxy = "157.245.40.210:80"
+            uk_proxy = f"http://{free_uk_proxy}"
+            print(f"     🔄 Using FREE UK Proxy (Slough, GB): {uk_proxy}")
+            detected_location = "UK, Slough (via free proxy)"
         else:
-            proxies = None
-            print(f"     ⚠️  No UK proxy configured - requests will come from Railway server location")
-            print(f"     💡 Set UK_PROXY env var to route requests through UK (e.g., UK_PROXY=http://uk-proxy:port)")
+            print(f"     🔄 Using UK Proxy: {uk_proxy}")
+            detected_location = "UK (via proxy)"
+        
+        proxies = {
+            'http': uk_proxy,
+            'https': uk_proxy
+        }
         print()
         
         try:
