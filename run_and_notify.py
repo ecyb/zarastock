@@ -664,18 +664,19 @@ class ZaraStockChecker:
 
 
 # Flask API server for /check endpoint
+_checker_instance = None  # Global checker instance
+
 def create_flask_app():
     """Create Flask app for /check endpoint."""
     try:
         from flask import Flask, jsonify, request
         app = Flask(__name__)
-        checker_instance = None
         
         def get_checker():
-            global checker_instance
-            if checker_instance is None:
-                checker_instance = ZaraStockChecker(verbose=True)
-            return checker_instance
+            global _checker_instance
+            if _checker_instance is None:
+                _checker_instance = ZaraStockChecker(verbose=True)
+            return _checker_instance
         
         @app.route('/check', methods=['GET', 'POST'])
         def check_stock():
