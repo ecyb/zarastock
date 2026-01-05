@@ -430,16 +430,23 @@ class ZaraStockChecker:
                 if self.verbose:
                     print(f"  📄 Fetching product name from: {product_page_url}")
                 try:
-                    # Use UK proxy (same as API request - use free proxy if not configured)
-                    uk_proxy = os.getenv('UK_PROXY') or os.getenv('PROXY_URL')
-                    if not uk_proxy:
-                        uk_proxy = "http://157.245.40.210:80"  # Free UK proxy (Slough, GB)
-                    proxies = {'http': uk_proxy, 'https': uk_proxy}
+                    # Use UK proxy (same as API request - use free proxy if not configured, fallback to no proxy)
+                    uk_proxy_page = os.getenv('UK_PROXY') or os.getenv('PROXY_URL')
+                    proxies = None
+                    
+                    if not uk_proxy_page:
+                        # Try free UK proxy first
+                        free_uk_proxy = "http://157.245.40.210:80"
+                        proxies = {'http': free_uk_proxy, 'https': free_uk_proxy}
+                    else:
+                        proxies = {'http': uk_proxy_page, 'https': uk_proxy_page}
                     
                     # Try multiple times if it fails
                     for attempt in range(2):
                         try:
                             page_response = self.session.get(product_page_url, proxies=proxies, timeout=15)
+                            page_response.raise_for_status()  # Check if request succeeded
+                            
                             if page_response.status_code == 200:
                                 html = page_response.text
                                 
