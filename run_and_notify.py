@@ -24,12 +24,29 @@ try:
     
     checker = ZaraStockChecker(verbose=True)
     
-    # Get products from config (same as app.py)
+    # Get products from config (load_config already handles ZARA_PRODUCTS env var)
     products = checker.config.get('products', [])
     if not products:
         print("❌ No products configured in config.json or ZARA_PRODUCTS env var")
         print("   Add products to config.json or set ZARA_PRODUCTS environment variable")
+        print(f"   Current ZARA_PRODUCTS env: {os.getenv('ZARA_PRODUCTS', 'NOT SET')}")
         sys.exit(1)
+    
+    # load_config already handles ZARA_PRODUCTS and SKIP_NOSTOCK_NOTIFICATION from env vars
+    # But let's verify and show what's being used
+    zara_products_env = os.getenv('ZARA_PRODUCTS')
+    skip_nostock_env = os.getenv('SKIP_NOSTOCK_NOTIFICATION')
+    
+    print("📋 Configuration:")
+    if zara_products_env:
+        print(f"   ✅ ZARA_PRODUCTS from env: {zara_products_env[:80]}..." if len(zara_products_env) > 80 else f"   ✅ ZARA_PRODUCTS from env: {zara_products_env}")
+    else:
+        print(f"   📄 Products from config.json: {len(products)} product(s)")
+    
+    if skip_nostock_env is not None:
+        print(f"   ✅ SKIP_NOSTOCK_NOTIFICATION from env: {skip_nostock_env}")
+    else:
+        print(f"   📄 skip_nostock_notification from config.json: {checker.config.get('skip_nostock_notification', False)}")
     
     # Get check interval from config (default: 60 seconds)
     check_interval = checker.config.get('check_interval', 60)
@@ -37,6 +54,7 @@ try:
     print(f"📦 Products to check: {len(products)}")
     for i, url in enumerate(products, 1):
         print(f"   {i}. {url}")
+    print(f"⚙️  skip_nostock_notification: {checker.config.get('skip_nostock_notification', False)}")
     print()
     
     # Check Telegram config
