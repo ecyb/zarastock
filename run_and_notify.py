@@ -841,11 +841,6 @@ class ZaraStockChecker:
             else:
                 view_url = None  # Don't show link if PRODUCT_LINK is empty
             
-            # Get location info for message
-            location = product_info.get('detected_location', 'Unknown')
-            country = product_info.get('detected_country', 'Unknown')
-            location_text = f"📍 Shop Location: {location}" if location != 'Unknown' else "📍 Location: Unknown"
-            
             # Build product name line (only if name is set)
             product_name_line = f"📦 <b>{product_name}</b>\n" if product_name else ""
             
@@ -858,14 +853,12 @@ class ZaraStockChecker:
                 message = f"""✅ <b>Zara Item In Stock!</b> {method_emoji}
 
 {product_name_line}📏 Available Sizes: <b>{sizes_text}</b>
-{location_text}
 {product_link_line}⏰ Check it out now before it sells out!"""
             else:
                 method_emoji = '🚀' if method == 'api' else '🌐'
                 message = f"""❌ <b>Zara Item Out of Stock</b> {method_emoji}
 
 {product_name_line}📏 Status: <b>OUT OF STOCK</b>
-{location_text}
 {product_link_line}⏰ Will notify you when it's back in stock!"""
             
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
