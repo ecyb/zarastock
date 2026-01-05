@@ -223,16 +223,56 @@ class ZaraStockChecker:
             print(f"  📥 Response Headers (all):")
             for key, value in response.headers.items():
                 print(f"     {key}: {value}")
+            print()
             
+            # Try to detect server location from headers
             country_header = response.headers.get('cf-ipcountry') or response.headers.get('x-country-code') or response.headers.get('x-region')
-            if country_header:
-                print(f"  🌍 Detected Country/Region from headers: {country_header}")
-            else:
-                print(f"  ⚠️  No country/region header detected - Zara may be using IP geolocation")
+            request_ip = response.headers.get('x-forwarded-for') or response.headers.get('cf-connecting-ip') or response.headers.get('x-real-ip')
             
-            request_ip = response.headers.get('x-forwarded-for') or response.headers.get('cf-connecting-ip')
+            print(f"  🌍 Server Location Detection:")
+            if country_header:
+                print(f"     ✅ Detected Country/Region from headers: {country_header}")
+            else:
+                print(f"     ⚠️  No country/region header detected in response")
+            
             if request_ip:
-                print(f"  🌐 Request IP: {request_ip}")
+                print(f"     🌐 Request IP: {request_ip}")
+                # Try to get location from IP using a simple API
+                try:
+                    import requests as req_lib
+                    ip_check = req_lib.get(f"http://ip-api.com/json/{request_ip.split(',')[0].strip()}", timeout=3)
+                    if ip_check.status_code == 200:
+                        ip_data = ip_check.json()
+                        if ip_data.get('status') == 'success':
+                            country = ip_data.get('country', 'Unknown')
+                            city = ip_data.get('city', 'Unknown')
+                            region = ip_data.get('regionName', 'Unknown')
+                            print(f"     📍 IP Location: {city}, {region}, {country}")
+                            print(f"     🏢 ISP: {ip_data.get('isp', 'Unknown')}")
+                            print(f"     ⚠️  WARNING: Railway server is in {country}, NOT UK!")
+                            print(f"     ⚠️  Zara API returns inventory for {country} region, not UK!")
+                except Exception as e:
+                    if self.verbose:
+                        print(f"     ⚠️  Could not geolocate IP: {e}")
+            else:
+                print(f"     ⚠️  No IP address found in response headers")
+                # Try to get our own IP
+                try:
+                    import requests as req_lib
+                    own_ip = req_lib.get("http://ip-api.com/json/", timeout=3)
+                    if own_ip.status_code == 200:
+                        ip_data = own_ip.json()
+                        if ip_data.get('status') == 'success':
+                            country = ip_data.get('country', 'Unknown')
+                            city = ip_data.get('city', 'Unknown')
+                            region = ip_data.get('regionName', 'Unknown')
+                            print(f"     📍 Server Location (from own IP): {city}, {region}, {country}")
+                            print(f"     🏢 ISP: {ip_data.get('isp', 'Unknown')}")
+                            print(f"     ⚠️  WARNING: Railway server is in {country}, NOT UK!")
+                            print(f"     ⚠️  Zara API returns inventory for {country} region, not UK!")
+                except Exception as e:
+                    if self.verbose:
+                        print(f"     ⚠️  Could not detect server location: {e}")
             print()
             
             if response.status_code != 200:
