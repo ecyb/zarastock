@@ -89,6 +89,23 @@ class ZaraStockChecker:
         country = country_match.group(1) if country_match else 'uk'
         store_id = store_map.get(country, 10706)  # Default to UK
         
+        # Known product ID mappings (for when page is blocked)
+        # Format: product-page-slug -> product_id
+        known_products = {
+            'wool-double-breasted-coat-p08475319': 483276547,
+            # Add more mappings as needed
+        }
+        
+        # Try to match known product from URL
+        url_slug_match = re.search(r'/([^/]+-p\d+)\.html', url)
+        if url_slug_match:
+            slug = url_slug_match.group(1)
+            if slug in known_products:
+                product_id = known_products[slug]
+                if self.verbose:
+                    print(f"  ✅ Found known product ID: {product_id} (from mapping)")
+                return {'product_id': product_id, 'store_id': store_id}
+        
         # Fetch the page to get the actual product ID from JavaScript/JSON
         try:
             response = self.session.get(url, timeout=10)
@@ -152,6 +169,13 @@ class ZaraStockChecker:
         except Exception as e:
             if self.verbose:
                 print(f"  ⚠️  Could not extract product ID from page: {e}")
+                print(f"  💡 Tip: Use API URL directly: https://www.zara.com/itxrest/1/catalog/store/{store_id}/product/id/PRODUCT_ID/availability")
+        
+        # Last resort: if we have a product page URL pattern, suggest using API URL
+        if '/uk/en/' in url and '-p' in url:
+            if self.verbose:
+                print(f"  ⚠️  Cannot extract product ID. Please use API URL directly in config.json")
+                print(f"  💡 Example API URL format: https://www.zara.com/itxrest/1/catalog/store/10706/product/id/483276547/availability")
         
         return None
     
