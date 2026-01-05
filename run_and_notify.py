@@ -220,16 +220,22 @@ class ZaraStockChecker:
         detected_location = "Unknown"
         proxies = None
         
+        # List of free UK proxies to try (in order)
+        free_uk_proxies = [
+            "139.162.236.244:80",  # London (Akamai) - tested and works
+            "139.162.200.213:80",  # London (Akamai)
+            "38.60.196.214:80",    # London (Kaopu Cloud)
+            "157.245.40.210:80",   # Slough (DigitalOcean)
+        ]
+        
         if not uk_proxy:
-            # Use free UK proxy (Slough, GB) - will fallback to no proxy if it fails
-            free_uk_proxy = "157.245.40.210:80"
-            uk_proxy = f"http://{free_uk_proxy}"
-            print(f"     🔄 Trying FREE UK Proxy (Slough, GB): {uk_proxy}")
-            detected_location = "UK, Slough (via free proxy)"
-            proxies = {
-                'http': uk_proxy,
-                'https': uk_proxy
-            }
+            # Use first free UK proxy (139.162.236.244:80 - tested and works)
+            # If it fails, will fallback to no proxy in the try/except below
+            proxy_addr = free_uk_proxies[0]
+            uk_proxy = f"http://{proxy_addr}"
+            proxies = {'http': uk_proxy, 'https': uk_proxy}
+            detected_location = f"UK (via free proxy {proxy_addr.split(':')[0]})"
+            print(f"     🔄 Using FREE UK Proxy: {uk_proxy}")
         else:
             print(f"     🔄 Using UK Proxy: {uk_proxy}")
             detected_location = "UK (via proxy)"
@@ -240,8 +246,12 @@ class ZaraStockChecker:
         
         print()
         
+        # Store working proxy for reuse in product page fetch
+        working_proxies = proxies
+        
         try:
-            # Try with proxy first (if set)
+            # Make the actual request - try proxy first, fallback to no proxy if it fails
+            response = None
             if proxies:
                 try:
                     response = self.session.get(api_url, headers=api_headers, proxies=proxies, timeout=10)
@@ -250,19 +260,44 @@ class ZaraStockChecker:
                         raise Exception(f"Proxy returned {response.status_code} - likely blocked")
                     response.raise_for_status()  # Check if request succeeded
                 except Exception as proxy_error:
-                    # Proxy failed, fallback to no proxy
-                    if not uk_proxy or uk_proxy == f"http://157.245.40.210:80":
-                        print(f"     ⚠️  Free UK proxy failed: {proxy_error}")
-                        print(f"     🔄 Falling back to NO PROXY (direct connection)")
+                    # Proxy failed, try fallback proxies or no proxy
+                    print(f"     ⚠️  Proxy failed: {proxy_error}")
+                    
+                    # Try other free proxies
+                    if not uk_proxy or uk_proxy.startswith("http://139.162.236.244"):
+                        fallback_worked = False
+                        for proxy_addr in free_uk_proxies[1:]:  # Skip first one (already tried)
+                            try:
+                                fallback_proxy = f"http://{proxy_addr}"
+                                fallback_proxies = {'http': fallback_proxy, 'https': fallback_proxy}
+                                print(f"     🔄 Trying fallback proxy: {fallback_proxy}")
+                                response = self.session.get(api_url, headers=api_headers, proxies=fallback_proxies, timeout=10)
+                                if response.status_code == 200:
+                                    try:
+                                        # Verify it's valid JSON
+                                        test_data = response.json()
+                                        if 'skusAvailability' in test_data:
+                                            proxies = fallback_proxies
+                                            detected_location = f"UK (via free proxy {proxy_addr.split(':')[0]})"
+                                            print(f"     ✅ Fallback proxy works! Using: {fallback_proxy}")
+                                            fallback_worked = True
+                                            break
+                                    except:
+                                        pass
+                            except:
+                                continue
+                        
+                        if not fallback_worked:
+                            print(f"     🔄 All proxies failed, falling back to NO PROXY (direct connection)")
+                            proxies = None
+                            detected_location = "Unknown"
+                            response = self.session.get(api_url, headers=api_headers, timeout=10)
+                    else:
+                        # Custom proxy failed, just fallback to no proxy
+                        print(f"     🔄 Custom proxy failed, falling back to NO PROXY")
                         proxies = None
                         detected_location = "Unknown"
                         response = self.session.get(api_url, headers=api_headers, timeout=10)
-                        # Check if direct connection also failed
-                        if response.status_code in [403, 429, 503]:
-                            if self.verbose:
-                                print(f"     ⚠️  Direct connection also blocked: {response.status_code}")
-                    else:
-                        raise  # Re-raise if it's a custom proxy
             else:
                 response = self.session.get(api_url, headers=api_headers, timeout=10)
             
@@ -437,38 +472,44 @@ class ZaraStockChecker:
                 if self.verbose:
                     print(f"  📄 Fetching product name from: {product_page_url}")
                 try:
-                    # Use UK proxy (same as API request - use free proxy if not configured, fallback to no proxy)
+                    # Use UK proxy (same as API request - reuse the working proxy from API call)
                     uk_proxy_page = os.getenv('UK_PROXY') or os.getenv('PROXY_URL')
                     proxies = None
                     
                     if not uk_proxy_page:
-                        # Try free UK proxies in order (same list as API)
-                        free_uk_proxies = [
-                            "139.162.236.244:80",  # London (Akamai) - tested and works
-                            "139.162.200.213:80",  # London (Akamai)
-                            "38.60.196.214:80",    # London (Kaopu Cloud)
-                            "157.245.40.210:80",   # Slough (DigitalOcean)
-                        ]
-                        
-                        for proxy_addr in free_uk_proxies:
-                            try:
-                                test_proxy = f"http://{proxy_addr}"
-                                test_proxies = {'http': test_proxy, 'https': test_proxy}
-                                # Quick test
-                                test_r = self.session.get(product_page_url, proxies=test_proxies, timeout=5)
-                                if test_r.status_code == 200:
-                                    proxies = test_proxies
-                                    break
-                            except:
-                                continue
+                        # Reuse the working proxy from API call if available
+                        if working_proxies and working_proxies.get('http'):
+                            proxies = working_proxies  # Reuse the working proxy from API call
+                        else:
+                            # Use first free UK proxy
+                            proxy_addr = free_uk_proxies[0]
+                            proxies = {'http': f"http://{proxy_addr}", 'https': f"http://{proxy_addr}"}
                     else:
                         proxies = {'http': uk_proxy_page, 'https': uk_proxy_page}
                     
-                    # Try multiple times if it fails
+                    # Try multiple times if it fails - with proxy fallback
                     for attempt in range(2):
                         try:
-                            page_response = self.session.get(product_page_url, proxies=proxies, timeout=15)
-                            page_response.raise_for_status()  # Check if request succeeded
+                            if attempt == 0 and proxies:
+                                if self.verbose:
+                                    print(f"  📄 Attempt {attempt + 1}: Fetching product page with proxy: {proxies.get('http')}")
+                                page_response = self.session.get(product_page_url, proxies=proxies, timeout=15)
+                            else:
+                                if self.verbose:
+                                    print(f"  📄 Attempt {attempt + 1}: Fetching product page without proxy (fallback)")
+                                proxies = None  # Disable proxy for fallback
+                                page_response = self.session.get(product_page_url, timeout=15)
+                            
+                            # Check if we got blocked
+                            if page_response.status_code in [403, 429, 503]:
+                                if attempt == 0 and proxies:
+                                    if self.verbose:
+                                        print(f"  ⚠️  Page fetch blocked ({page_response.status_code}), retrying without proxy...")
+                                    continue
+                                else:
+                                    if self.verbose:
+                                        print(f"  ⚠️  Page fetch blocked even without proxy: {page_response.status_code}")
+                                    break
                             
                             if page_response.status_code == 200:
                                 html = page_response.text
