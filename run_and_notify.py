@@ -103,8 +103,9 @@ try:
     # Run once (cron job will call this script every 60 seconds)
     print("🔍 Running stock check...")
     print()
-        try:
-            for product_url in products:
+    
+    try:
+        for product_url in products:
                 print("=" * 60)
                 print(f"🔍 Checking: {product_url}")
                 print("=" * 60)
