@@ -869,6 +869,7 @@ class ZaraStockChecker:
             
             print(f"\n📤 Sending Telegram notification...")
             print(f"   API URL: {url}")
+            print(f"   Total users to notify: {len(chat_ids)}")
             print(f"   Chat IDs: {chat_ids}")
             print(f"\n📨 Message to send:")
             print("   " + "-" * 50)
@@ -899,15 +900,31 @@ class ZaraStockChecker:
                         print(f"   ✅ Successfully sent to chat_id {cid}")
                         success_count += 1
                     else:
-                        print(f"   ⚠️  API returned ok=false: {response_data.get('description', 'Unknown error')}")
+                        error_desc = response_data.get('description', 'Unknown error')
+                        print(f"   ⚠️  API returned ok=false for {cid}: {error_desc}")
+                        # Log specific error reasons
+                        if 'blocked' in error_desc.lower() or 'chat not found' in error_desc.lower():
+                            print(f"   💡 User {cid} may have blocked the bot or chat doesn't exist")
+                        elif 'forbidden' in error_desc.lower():
+                            print(f"   💡 Bot doesn't have permission to message user {cid}")
+                except requests.exceptions.HTTPError as e:
+                    print(f"   ❌ HTTP error sending to chat_id {cid}: {e}")
+                    if hasattr(e.response, 'text'):
+                        print(f"   📄 Response: {e.response.text[:200]}")
                 except Exception as e:
                     print(f"   ❌ Failed to send to chat_id {cid}: {e}")
+                    import traceback
+                    traceback.print_exc()
             
             print()
             if success_count > 0:
-                print(f"✅ Telegram notification sent to {success_count} user(s) for {product_name}")
+                print(f"✅ Telegram notification sent to {success_count}/{len(chat_ids)} user(s) for {product_name}")
+                if success_count < len(chat_ids):
+                    failed_count = len(chat_ids) - success_count
+                    print(f"⚠️  {failed_count} user(s) did not receive notification (check logs above for details)")
             else:
-                print(f"❌ Failed to send Telegram notification to any users")
+                print(f"❌ Failed to send Telegram notification to any of {len(chat_ids)} users")
+                print(f"   Check bot token, chat IDs, and user permissions")
         except Exception as e:
             print(f"❌ Error sending Telegram notification: {e}")
     
@@ -1055,6 +1072,9 @@ def create_flask_app():
             global _checker_instance
             if _checker_instance is None:
                 _checker_instance = ZaraStockChecker(verbose=True)
+            else:
+                # Reload config to get latest registered users
+                _checker_instance.config = _checker_instance.load_config(_checker_instance.config_file)
             return _checker_instance
         
         @app.route('/check', methods=['GET', 'POST'])
