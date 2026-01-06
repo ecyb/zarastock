@@ -1142,6 +1142,11 @@ def create_flask_app():
         from flask import Flask, jsonify, request
         app = Flask(__name__)
         
+        # Log version on startup
+        print("=" * 60)
+        print(f"🚀 Zara Stock Checker v{VERSION}")
+        print("=" * 60)
+        
         def get_checker():
             global _checker_instance
             if _checker_instance is None:
