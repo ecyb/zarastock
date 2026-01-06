@@ -1,34 +1,27 @@
-# Python
+register_users.py
+.env
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
+*.pyc
+*.pyo
+*.pyd
 .Python
 env/
 venv/
-ENV/
-.venv
-
-# Configuration (contains sensitive info)
-config.json
-.env
-
-# Debug files
-last_check.html
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
 *.log
+.mypy_cache
+.pytest_cache
+.hypothesis
 logs/
 api_state.json
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Docker
-.env
-.vercel
+.vercel/
+users.json

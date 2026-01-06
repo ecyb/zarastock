@@ -753,6 +753,44 @@ class ZaraStockChecker:
         if skip_nostock_env is not None:
             config['skip_nostock_notification'] = skip_nostock_env.lower() in ('true', '1', 'yes')
         
+        # Merge users from users.json (persistent user registrations)
+        users_file = 'users.json'
+        
+        # Migrate existing users from config.json to users.json (one-time migration)
+        if not os.path.exists(users_file) and config.get('telegram', {}).get('chat_ids'):
+            try:
+                # Create users.json from existing config.json chat_ids
+                existing_chat_ids = config['telegram']['chat_ids']
+                users_data = {'chat_ids': [str(cid) for cid in existing_chat_ids]}
+                with open(users_file, 'w') as f:
+                    json.dump(users_data, f, indent=2)
+                if self.verbose:
+                    print(f"✅ Migrated {len(existing_chat_ids)} users from config.json to users.json")
+            except Exception as e:
+                if self.verbose:
+                    print(f"⚠️  Could not migrate users to users.json: {e}")
+        
+        # Load and merge users from users.json
+        if os.path.exists(users_file):
+            try:
+                with open(users_file, 'r') as f:
+                    users_data = json.load(f)
+                    # Merge chat_ids from users.json with config.json
+                    if 'chat_ids' in users_data:
+                        if 'telegram' not in config:
+                            config['telegram'] = {}
+                        if 'chat_ids' not in config['telegram']:
+                            config['telegram']['chat_ids'] = []
+                        # Merge and deduplicate
+                        existing_ids = set([str(cid) for cid in config['telegram']['chat_ids']])
+                        for user_id in users_data['chat_ids']:
+                            user_id_str = str(user_id)
+                            if user_id_str not in existing_ids:
+                                config['telegram']['chat_ids'].append(user_id_str)
+            except Exception as e:
+                if self.verbose:
+                    print(f"⚠️  Could not load users.json: {e}")
+        
         return config
     
     def check_stock(self, url: str) -> Dict:
@@ -965,37 +1003,54 @@ def process_telegram_webhook_update(update: dict, checker_instance):
             return None
     
     def register_user(user_id: str, username: str = None, first_name: str = None):
-        """Register a user by adding them to chat_ids in config.json."""
-        config = checker_instance.config
-        
-        if 'telegram' not in config:
-            config['telegram'] = {}
-        if 'chat_ids' not in config['telegram']:
-            config['telegram']['chat_ids'] = []
+        """Register a user by adding them to chat_ids in users.json (persistent storage)."""
+        users_file = 'users.json'
         
         # Convert user_id to string for consistency
         user_id_str = str(user_id)
         
+        # Load existing users
+        users_data = {'chat_ids': []}
+        if os.path.exists(users_file):
+            try:
+                with open(users_file, 'r') as f:
+                    users_data = json.load(f)
+                    if 'chat_ids' not in users_data:
+                        users_data['chat_ids'] = []
+            except Exception as e:
+                print(f"⚠️  Error loading users.json: {e}")
+                users_data = {'chat_ids': []}
+        
         # Check if user is already registered
-        chat_ids = config['telegram']['chat_ids']
-        if user_id_str in chat_ids:
+        if user_id_str in users_data['chat_ids']:
             return False, "User already registered"
         
         # Add user to chat_ids
-        chat_ids.append(user_id_str)
+        users_data['chat_ids'].append(user_id_str)
         
-        # Save config
+        # Save to users.json (persistent storage, gitignored)
         try:
-            # Use the same config file path as the checker
-            config_file = getattr(checker_instance, 'config_file', 'config.json')
-            with open(config_file, 'w') as f:
-                json.dump(config, f, indent=2)
-            # Reload config in checker instance
-            checker_instance.config = config
+            with open(users_file, 'w') as f:
+                json.dump(users_data, f, indent=2)
+            
+            # Also update in-memory config
+            config = checker_instance.config
+            if 'telegram' not in config:
+                config['telegram'] = {}
+            if 'chat_ids' not in config['telegram']:
+                config['telegram']['chat_ids'] = []
+            if user_id_str not in config['telegram']['chat_ids']:
+                config['telegram']['chat_ids'].append(user_id_str)
+            
+            # Reload config to ensure consistency
+            checker_instance.config = checker_instance.load_config(checker_instance.config_file)
+            
             return True, f"User {user_id_str} ({username or first_name or 'Unknown'}) registered successfully"
         except Exception as e:
-            print(f"⚠️  Error saving config: {e}")
-            return False, f"Error saving config: {e}"
+            print(f"⚠️  Error saving users.json: {e}")
+            import traceback
+            traceback.print_exc()
+            return False, f"Error saving users.json: {e}"
     
     # Handle /start command
     if 'message' in update:
