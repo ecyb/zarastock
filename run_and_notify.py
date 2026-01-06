@@ -764,32 +764,38 @@ class ZaraStockChecker:
                 users_data = {'chat_ids': [str(cid) for cid in existing_chat_ids]}
                 with open(users_file, 'w') as f:
                     json.dump(users_data, f, indent=2)
-                if self.verbose:
-                    print(f"✅ Migrated {len(existing_chat_ids)} users from config.json to users.json")
+                print(f"✅ Migrated {len(existing_chat_ids)} users from config.json to users.json: {existing_chat_ids}")
             except Exception as e:
-                if self.verbose:
-                    print(f"⚠️  Could not migrate users to users.json: {e}")
+                print(f"⚠️  Could not migrate users to users.json: {e}")
+                import traceback
+                traceback.print_exc()
         
         # Load and merge users from users.json
         if os.path.exists(users_file):
             try:
                 with open(users_file, 'r') as f:
                     users_data = json.load(f)
+                    print(f"📂 Loaded users.json with {len(users_data.get('chat_ids', []))} users: {users_data.get('chat_ids', [])}")
                     # Merge chat_ids from users.json with config.json
                     if 'chat_ids' in users_data:
                         if 'telegram' not in config:
                             config['telegram'] = {}
                         if 'chat_ids' not in config['telegram']:
                             config['telegram']['chat_ids'] = []
-                        # Merge and deduplicate
-                        existing_ids = set([str(cid) for cid in config['telegram']['chat_ids']])
-                        for user_id in users_data['chat_ids']:
-                            user_id_str = str(user_id)
-                            if user_id_str not in existing_ids:
-                                config['telegram']['chat_ids'].append(user_id_str)
+                        # Start with users.json (source of truth), then add any from config.json that aren't there
+                        merged_ids = set([str(cid) for cid in users_data['chat_ids']])
+                        # Add any from config.json that aren't in users.json
+                        for cid in config['telegram']['chat_ids']:
+                            merged_ids.add(str(cid))
+                        # Set merged list
+                        config['telegram']['chat_ids'] = list(merged_ids)
+                        print(f"✅ Merged users: {len(config['telegram']['chat_ids'])} total users: {config['telegram']['chat_ids']}")
             except Exception as e:
-                if self.verbose:
-                    print(f"⚠️  Could not load users.json: {e}")
+                print(f"⚠️  Could not load users.json: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"⚠️  users.json does not exist - will create on first user registration")
         
         return config
     
@@ -1129,7 +1135,10 @@ def create_flask_app():
                 _checker_instance = ZaraStockChecker(verbose=True)
             else:
                 # Reload config to get latest registered users
+                print(f"🔄 Reloading config to get latest registered users...")
                 _checker_instance.config = _checker_instance.load_config(_checker_instance.config_file)
+                chat_ids = _checker_instance.config.get('telegram', {}).get('chat_ids', [])
+                print(f"📋 Loaded {len(chat_ids)} users from config: {chat_ids}")
             return _checker_instance
         
         @app.route('/check', methods=['GET', 'POST'])
@@ -1156,6 +1165,8 @@ def create_flask_app():
                 
                 for product_url in products:
                     try:
+                        # Force reload config before checking stock to ensure latest users
+                        checker.config = checker.load_config(checker.config_file)
                         stock_info = checker.check_stock(product_url)
                         
                         current_in_stock = stock_info.get('in_stock', False)
@@ -1163,6 +1174,8 @@ def create_flask_app():
                         
                         if current_in_stock or (not current_in_stock and not skip_nostock):
                             try:
+                                # Reload config again before sending notification to ensure latest users
+                                checker.config = checker.load_config(checker.config_file)
                                 checker.send_notification(stock_info)
                                 notifications_sent.append(product_url)
                             except Exception as notify_error:
@@ -1223,6 +1236,8 @@ def create_flask_app():
                 
                 # Process the update
                 checker = get_checker()
+                # Force reload config before processing to ensure latest users
+                checker.config = checker.load_config(checker.config_file)
                 process_telegram_webhook_update(update, checker)
                 
                 return jsonify({'ok': True})
