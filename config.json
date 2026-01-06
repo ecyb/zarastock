@@ -1,0 +1,18 @@
+{
+  "products": [
+    "https://www.zara.com/itxrest/1/catalog/store/10706/product/id/483276547/availability"
+  ],
+  "telegram": {
+    "enabled": true,
+    "bot_token": "YOUR_BOT_TOKEN",
+    "chat_id": "YOUR_CHAT_ID",
+    "chat_ids": [
+      "1042960831",
+      "742044567"
+    ]
+  },
+  "check_interval": 60,
+  "skip_nostock_notification": false,
+  "notify_only_all_sizes": true,
+  "min_sizes_in_stock": 0
+}
