@@ -757,14 +757,24 @@ class ZaraStockChecker:
         users_file = 'users.json'
         
         # Migrate existing users from config.json to users.json (one-time migration)
-        if not os.path.exists(users_file) and config.get('telegram', {}).get('chat_ids'):
+        # Read directly from config.json file to ensure we get all users
+        if not os.path.exists(users_file):
             try:
-                # Create users.json from existing config.json chat_ids
-                existing_chat_ids = config['telegram']['chat_ids']
-                users_data = {'chat_ids': [str(cid) for cid in existing_chat_ids]}
-                with open(users_file, 'w') as f:
-                    json.dump(users_data, f, indent=2)
-                print(f"✅ Migrated {len(existing_chat_ids)} users from config.json to users.json: {existing_chat_ids}")
+                # Read config.json directly from file to get all users
+                config_file_path = config_file if os.path.exists(config_file) else 'config.json'
+                if os.path.exists(config_file_path):
+                    with open(config_file_path, 'r') as f:
+                        file_config = json.load(f)
+                        file_chat_ids = file_config.get('telegram', {}).get('chat_ids', [])
+                        # Also check loaded config in case env vars added users
+                        loaded_chat_ids = config.get('telegram', {}).get('chat_ids', [])
+                        # Merge both sources
+                        all_chat_ids = list(set([str(cid) for cid in file_chat_ids] + [str(cid) for cid in loaded_chat_ids]))
+                        if all_chat_ids:
+                            users_data = {'chat_ids': all_chat_ids}
+                            with open(users_file, 'w') as f:
+                                json.dump(users_data, f, indent=2)
+                            print(f"✅ Migrated {len(all_chat_ids)} users from config.json to users.json: {all_chat_ids}")
             except Exception as e:
                 print(f"⚠️  Could not migrate users to users.json: {e}")
                 import traceback
