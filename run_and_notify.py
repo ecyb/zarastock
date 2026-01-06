@@ -4,6 +4,9 @@ Zara Stock Checker - Run stock check and send Telegram notification
 All-in-one script (merged from zara_stock_checker.py)
 """
 
+# Version for tracking deployments
+VERSION = "1.2.0-migration-fix"
+
 import requests
 from bs4 import BeautifulSoup
 import json
@@ -1283,6 +1286,7 @@ if __name__ == "__main__":
     else:
         # Run as standalone script (for cron jobs)
         print("=" * 60)
+        print(f"🚀 Zara Stock Checker v{VERSION}")
         print("🚀 Running Stock Check & Sending Telegram Notification")
         print("=" * 60)
         print()
